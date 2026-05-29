@@ -1,0 +1,15 @@
+# Bases de datos locales
+data.db
+*.sqlite3
+
+# CRENDENCIALES Y APIS
+config.py
+.env
+
+# Archivos compilados de Python
+Auditorias/
+__pycache__/
+*.py[cod]
+
+# Entornos virtuales
+venv/
