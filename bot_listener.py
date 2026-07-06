@@ -125,12 +125,12 @@ def procesar_gasto(message):
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-        
+        fecha_envio = datetime.fromtimestamp(message.date).strftime("%Y-%m-%d")
+
         cursor.execute("""
             INSERT INTO gastos (desc, monto, categoria, fecha, con_factura, es_deducible)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (desc.strip(), monto, categoria_real, fecha_hoy, con_factura, es_deducible))
+        """, (desc.strip(), monto, categoria_real, fecha_envio, con_factura, es_deducible))
         
         conn.commit()
         conn.close()

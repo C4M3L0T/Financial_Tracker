@@ -13,8 +13,8 @@ class ArchProductivityApp(ctk.CTk):
         super().__init__()
 
         self.title("Arch Productivity Hub - Enterprise v6.5")
-        self.geometry("1200x800")
-        self.minsize(1100, 750)
+        self.geometry("1300x900")
+        self.minsize(1200, 800)
         
         # Inicializar capa de datos unificada
         database.init_db()

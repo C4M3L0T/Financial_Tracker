@@ -6,11 +6,98 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # Módulo de Hábitos y Agenda
-    cursor.execute("CREATE TABLE IF NOT EXISTS habitos_lista (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, categoria TEXT)")
-    cursor.execute("CREATE TABLE IF NOT EXISTS habitos_log (habito_id INTEGER, fecha TEXT, PRIMARY KEY (habito_id, fecha))")
+    # Módulo de Agenda: Eventos (con hora) y Tareas (checkbox, sin hora)
     cursor.execute("CREATE TABLE IF NOT EXISTS agenda (id INTEGER PRIMARY KEY AUTOINCREMENT, tarea TEXT, fecha TEXT, hora TEXT)")
-    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tareas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            descripcion TEXT,
+            fecha TEXT,
+            completada INTEGER DEFAULT 0
+        )
+    """)
+
+    # Módulo de Habit Game: Hábitos personalizados (recurrentes por día de semana)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS habitos_custom (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT,
+            dias_semana TEXT,
+            categoria TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS habitos_custom_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            habito_id INTEGER,
+            fecha TEXT,
+            UNIQUE(habito_id, fecha)
+        )
+    """)
+
+    # Módulo de Habit Game: Fuerza (Push/Pull/Legs/Upper/Lower) y Natación
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS entrenamiento_dias (
+            dia_semana TEXT PRIMARY KEY,
+            dia_tipo TEXT
+        )
+    """)
+    cursor.execute("SELECT COUNT(*) FROM entrenamiento_dias")
+    if cursor.fetchone()[0] == 0:
+        asignacion_default = [
+            ("Lunes", "Push"), ("Martes", "Pull"), ("Miércoles", "Legs"),
+            ("Jueves", "Upper"), ("Viernes", "Lower"), ("Sábado", "Descanso"), ("Domingo", "Descanso"),
+        ]
+        cursor.executemany("INSERT INTO entrenamiento_dias (dia_semana, dia_tipo) VALUES (?, ?)", asignacion_default)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS entrenamiento_ejercicios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dia_tipo TEXT,
+            nombre TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS entrenamiento_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ejercicio_id INTEGER,
+            semana TEXT,
+            fecha TEXT,
+            UNIQUE(ejercicio_id, semana)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS natacion_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            semana TEXT,
+            fecha TEXT,
+            distancia_m REAL
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS natacion_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            meta_sesiones INTEGER NOT NULL DEFAULT 3
+        )
+    """)
+    cursor.execute("INSERT OR IGNORE INTO natacion_config (id, meta_sesiones) VALUES (1, 3)")
+
+    cursor.execute("SELECT COUNT(*) FROM entrenamiento_ejercicios")
+    if cursor.fetchone()[0] == 0:
+        ejercicios_default = [
+            ("Push", "Press de banca"), ("Push", "Press militar"), ("Push", "Fondos en paralelas"),
+            ("Push", "Elevaciones laterales"), ("Push", "Extensión de tríceps"),
+            ("Pull", "Dominadas"), ("Pull", "Remo con barra"), ("Pull", "Jalón al pecho"),
+            ("Pull", "Curl de bíceps"), ("Pull", "Face pull"),
+            ("Legs", "Sentadilla"), ("Legs", "Peso muerto rumano"), ("Legs", "Prensa"),
+            ("Legs", "Zancadas"), ("Legs", "Elevación de gemelos"),
+            ("Upper", "Press inclinado"), ("Upper", "Remo en polea"), ("Upper", "Press Arnold"),
+            ("Upper", "Curl martillo"), ("Upper", "Extensión de tríceps en polea"),
+            ("Lower", "Sentadilla frontal"), ("Lower", "Hip thrust"), ("Lower", "Zancadas búlgaras"),
+            ("Lower", "Curl femoral"), ("Lower", "Elevación de gemelos de pie"),
+        ]
+        cursor.executemany("INSERT INTO entrenamiento_ejercicios (dia_tipo, nombre) VALUES (?, ?)", ejercicios_default)
+
     # Módulo de Tesorería (Ingresos y Egresos con SAT)
     cursor.execute("CREATE TABLE IF NOT EXISTS ingresos (id INTEGER PRIMARY KEY AUTOINCREMENT, desc TEXT, monto REAL, fuente TEXT, fecha TEXT)")
     cursor.execute("CREATE TABLE IF NOT EXISTS gastos (id INTEGER PRIMARY KEY AUTOINCREMENT, desc TEXT, monto REAL, categoria TEXT, fecha TEXT, con_factura INTEGER, es_deducible INTEGER)")

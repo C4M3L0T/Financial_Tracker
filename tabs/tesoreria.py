@@ -131,25 +131,56 @@ class TesoreriaTab(ctk.CTkFrame):
         conn.close()
         self.actualizar()
 
+    def abrir_editor_fecha(self, tabla, registro_id, fecha_actual):
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Editar Fecha")
+        dialog.geometry("300x160")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        ctk.CTkLabel(dialog, text="Nueva fecha (YYYY-MM-DD):", font=("Urbanist", 12)).pack(pady=(20, 5), padx=20)
+        entry_fecha = ctk.CTkEntry(dialog)
+        entry_fecha.insert(0, fecha_actual)
+        entry_fecha.pack(pady=5, padx=20, fill="x")
+
+        def guardar():
+            nueva_fecha = entry_fecha.get().strip()
+            try:
+                datetime.strptime(nueva_fecha, "%Y-%m-%d")
+            except ValueError:
+                messagebox.showerror("Fecha Inválida", "Usa el formato YYYY-MM-DD (ej: 2026-07-06).")
+                return
+
+            conn = sqlite3.connect("data.db")
+            conn.cursor().execute(f"UPDATE {tabla} SET fecha=? WHERE id=?", (nueva_fecha, registro_id))
+            conn.commit()
+            conn.close()
+            dialog.destroy()
+            self.actualizar()
+
+        ctk.CTkButton(dialog, text="Guardar", fg_color="#3B82F6", hover_color="#2563EB", command=guardar).pack(pady=15, padx=20, fill="x")
+
     def actualizar(self):
         for w in self.frame_historial_gastos.winfo_children(): w.destroy()
         for w in self.frame_historial_ingresos.winfo_children(): w.destroy()
-        
+
         conn = sqlite3.connect("data.db")
         cursor = conn.cursor()
-        
-        cursor.execute("SELECT id, desc, monto, categoria FROM gastos ORDER BY id DESC LIMIT 20")
-        for gid, d, m, c in cursor.fetchall():
+
+        cursor.execute("SELECT id, desc, monto, categoria, fecha FROM gastos ORDER BY id DESC LIMIT 20")
+        for gid, d, m, c, fe in cursor.fetchall():
             row = ctk.CTkFrame(self.frame_historial_gastos, fg_color="transparent")
             row.pack(fill="x", pady=2)
-            ctk.CTkLabel(row, text=f"📉 ${m:,.2f} - {d} ({c})", font=("Urbanist", 13)).pack(side="left", padx=5)
-            ctk.CTkButton(row, text="🗑️", width=30, fg_color="#EF4444", command=lambda i=gid: self.eliminar_gasto(i)).pack(side="right")
-            
-        cursor.execute("SELECT id, desc, monto, fuente FROM ingresos ORDER BY id DESC LIMIT 20")
-        for iid, d, m, f in cursor.fetchall():
+            ctk.CTkLabel(row, text=f"📉 ${m:,.2f} - {d} ({c}) [{fe}]", font=("Urbanist", 13)).pack(side="left", padx=5)
+            ctk.CTkButton(row, text="🗑", width=30, fg_color="#EF4444", command=lambda i=gid: self.eliminar_gasto(i)).pack(side="right")
+            ctk.CTkButton(row, text="📅", width=30, fg_color="#3B82F6", hover_color="#2563EB", command=lambda i=gid, fe=fe: self.abrir_editor_fecha("gastos", i, fe)).pack(side="right", padx=3)
+
+        cursor.execute("SELECT id, desc, monto, fuente, fecha FROM ingresos ORDER BY id DESC LIMIT 20")
+        for iid, d, m, f, fe in cursor.fetchall():
             row = ctk.CTkFrame(self.frame_historial_ingresos, fg_color="transparent")
             row.pack(fill="x", pady=2)
-            ctk.CTkLabel(row, text=f"📈 ${m:,.2f} - {d} ({f})", font=("Urbanist", 13)).pack(side="left", padx=5)
-            ctk.CTkButton(row, text="🗑️", width=30, fg_color="#EF4444", command=lambda i=iid: self.eliminar_ingreso(i)).pack(side="right")
-            
+            ctk.CTkLabel(row, text=f"📈 ${m:,.2f} - {d} ({f}) [{fe}]", font=("Urbanist", 13)).pack(side="left", padx=5)
+            ctk.CTkButton(row, text="🗑", width=30, fg_color="#EF4444", command=lambda i=iid: self.eliminar_ingreso(i)).pack(side="right")
+            ctk.CTkButton(row, text="📅", width=30, fg_color="#3B82F6", hover_color="#2563EB", command=lambda i=iid, fe=fe: self.abrir_editor_fecha("ingresos", i, fe)).pack(side="right", padx=3)
+
         conn.close()
