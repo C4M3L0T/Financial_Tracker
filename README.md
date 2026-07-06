@@ -1,31 +1,118 @@
-# Arch Productivity Hub
+# Financial_Tracker
 
-Aplicación de escritorio (customtkinter) para finanzas personales y hábitos, pensada para un solo usuario en México. Modela balances bajo NIF B-6, deducciones SAT/LISR, deudas a meses sin intereses (MSI), y ahora también un sistema de hábitos "gamificado" (Habit Game) integrado con la agenda. Todo se guarda en un archivo SQLite local (`data.db`); un bot de Telegram permite capturar gastos desde el celular.
+Una plataforma avanzada de ingeniería financiera personal que cierra la brecha entre el simple registro de datos y el modelado económico riguroso. Diseñada para operar en la intersección de las finanzas cuantitativas, el cálculo, la microeconomía y los principios de la contabilidad de partida doble.
 
-## Módulos
+Este proyecto utiliza `customtkinter` para una interfaz gráfica de alto rendimiento, `sqlite3` para la persistencia analítica local, y el motor de `matplotlib` combinado con `numpy` para la renderización de modelos numéricos.
 
-- **Hábitos & Agenda — Habit Game** (ver detalle abajo)
-- **Tesorería** — registro de ingresos/gastos, con flags de CFDI y deducibilidad, y edición de fecha por transacción
-- **Planeación (MSI)** — control de deudas a meses sin intereses y simulador "what-if" de reducción de gasto por categoría
-- **Impuestos e Inversión** — tasa marginal ISR (Art. 152 LISR), deducciones personales, runway de liquidez
-- **Balance General** — activos/pasivos mensuales (NIF B-6), patrimonio neto, comparativa CETES vs. inflación
-- **Dashboard Financiero** — flujos de efectivo, escudo fiscal, velocidad de patrimonio, pronóstico de gasto (regresión lineal)
-- **Auditoría Patrimonial** — razón circulante y apalancamiento con dictamen automático
+---
 
-## Habit Game: Fuerza, Natación & Agenda
+## Arquitectura Teórica y Componentes del Dashboard
 
-La pestaña "Hábitos & Agenda" combina entrenamiento, natación, hábitos personalizados, tareas y eventos en **una sola cuadrícula semanal** (Lunes–Domingo):
+A diferencia de los rastreadores de gastos tradicionales, **Financial_Tracker** modela al usuario como un agente microeconómico que busca optimizar su utilidad intertemporal mientras gestiona su liquidez y riesgo sistémico.
+
+A continuación se detalla la fundamentación matemática, contable y microeconómica de cada uno de los módulos visuales implementados.
+
+### 1. Flujos de Efectivo (Liquidez Histórica)
+* **Descripción:** Gráfica de barras de doble eje que monitorea periódicamente los ingresos frente a las salidas de capital. Sirve como interfaz visual primaria para evaluar los umbrales de liquidez absoluta.
+* **Modelo Matemático:** Siendo $I_t$ la suma de ingresos y $E_t$ la suma de gastos (egresos) en el periodo $t$, el flujo neto $F_t$ se define como:
+  $$F_t = I_t - E_t = \sum_{i=1}^{n} I_i - \sum_{j=1}^{m} E_j$$
+* **Marco Contable:** Refleja el *Estado de Flujos de Efectivo* bajo la base de caja. Aísla la liquidez operativa del agente antes de impactos de financiamiento.
+* **Contexto Microeconómico:** Representa la frontera de restricción presupuestaria periódica. Monitorea si el agente opera en un régimen de superávit ($F_t > 0$) o si requiere acumulación de deuda ($F_t < 0$).
+
+### 2. Escudo Fiscal LISR (Eficiencia Fiscal)
+* **Descripción:** Desglose estructural que clasifica las salidas operativas basándose en sus atributos de deducibilidad fiscal.
+* **Modelo Matemático:** Dada una base de gastos $E_{\text{total}}$, el coeficiente de escudo fiscal $\eta$ se expresa como:
+  $$\eta = \frac{\sum E_{\text{deducible}}}{E_{\text{total}}}$$
+  El ahorro real generado (Escudo Fiscal) bajo una tasa marginal de impuesto $\tau$ es:
+  $$\text{Ahorro} = \tau \cdot \sum E_{\text{deducible}}$$
+* **Marco Contable:** Optimización contable fiscal. Mapea conceptos permitidos bajo la Ley del Impuesto sobre la Renta (LISR) para disminuir la base gravable neta.
+* **Contexto Microeconómico:** Minimiza las distorsiones del mercado. Los impuestos actúan como un costo exógeno; maximizar $\eta$ desplaza efectivamente la línea de presupuesto hacia afuera sin requerir mayor esfuerzo laboral.
+
+### 3. Aceleración del Patrimonio ($dW/dt$)
+* **Descripción:** Gráfica de líneas que representa la primera y segunda derivada de la riqueza respecto al tiempo, indicando la velocidad a la que cambia la acumulación de capital.
+* **Modelo Matemático:** Si $W(t)$ es la riqueza neta en el tiempo $t$, su aproximación discreta de velocidad (primera derivada) es el flujo neto:
+  $$\frac{dW}{dt} \approx \frac{\Delta W}{\Delta t} = W_t - W_{t-1} = F_t$$
+  La gráfica muestra la *aceleración* o desaceleración de esta velocidad:
+  $$\frac{d^2W}{dt^2} \approx \frac{F_t - F_{t-1}}{\Delta t}$$
+* **Marco Contable:** Conecta el Estado de Resultados con el Balance General. Una velocidad positiva expande las Utilidades Retenidas dentro del Capital Contable.
+* **Contexto Microeconómico:** Monitorea la trayectoria de la tasa de ahorro. Si la segunda derivada es negativa, el agente sufre de "inflación de estilo de vida", mostrando una compresión de márgenes sistémica.
+
+### 4. Proyección de Pasivos y MSI (Deuda a 6 Meses)
+* **Descripción:** Calendario de amortización que proyecta compromisos de efectivo obligatorios sobre un horizonte futuro, aislando la deuda sin intereses (MSI).
+* **Modelo Matemático:** Sea $L_k$ el pago mensual del pasivo $k$, con meses totales $M_k$ y meses pagados $P_k$. El compromiso de caja $C(m)$ para un mes futuro $m$ utiliza una función indicadora:
+  $$C(m) = \sum_{k=1}^{K} L_k \cdot \mathbb{I}_{\{M_k - P_k \ge m\}}$$
+* **Marco Contable:** Gestión de capital de trabajo y calendario de Pasivos Circulantes para prevenir crisis de liquidez a corto plazo.
+* **Contexto Microeconómico:** Teoría de elección intertemporal. Mapea cómo las decisiones de consumo pasadas restringen el ingreso discrecional futuro.
+
+### 5. Pareto de Costos (Estructura de Consumo)
+* **Descripción:** Análisis categórico ordenado diseñado para separar visualmente los pocos centros de costos vitales de los muchos triviales.
+* **Modelo Matemático:** Los gastos se ordenan tal que $E_{(1)} \ge E_{(2)} \ge \dots \ge E_{(c)}$. La función de distribución acumulada es:
+  $$Y_k = \frac{\sum_{i=1}^{k} E_{(i)}}{\sum_{j=1}^{c} E_{(j)}}$$
+* **Marco Contable:** Contabilidad administrativa. Permite dirigir las estrategias de reducción de costos hacia las cuentas que ofrecen el mayor impacto en la utilidad neta.
+* **Contexto Microeconómico:** Revela mapas de preferencias. Distingue los costos estructurales inelásticos (renta, educación) de las opciones discrecionales altamente elásticas.
+
+### 6. Pronóstico de Gasto (Machine Learning - Regresión Lineal OLS)
+* **Descripción:** Motor de inferencia predictiva que utiliza mínimos cuadrados ordinarios (OLS) para proyectar el comportamiento del gasto en el periodo $t+1$.
+* **Modelo Matemático:** Dados los periodos $x$ y gastos $y$, se estiman los parámetros $(\beta_0, \beta_1)$ minimizando los residuos:
+  $$\hat{y} = \beta_1 x + \beta_0$$
+  $$\beta_1 = \frac{\sum (x_i - \bar{x})(y_i - \bar{y})}{\sum (x_i - \bar{x})^2}$$
+* **Marco Contable:** Pronóstico financiero Pro-Forma. Establece la línea base necesaria para construir el presupuesto operativo del siguiente mes.
+* **Contexto Microeconómico:** Modelos de expectativas racionales y suavización del consumo estacional.
+
+---
+
+### 7. Integral del Flujo de Efectivo (Patrimonio Acumulado)
+* **Descripción:** Modelo de acumulación continua que mapea la riqueza total neta generada a partir del área bajo la curva del flujo de efectivo.
+* **Modelo Matemático:** La función de riqueza acumulada $W(T)$, dado un capital inicial $W_0$, se define como la integral del flujo neto:
+  $$W(T) = W_0 + \int_{0}^{T} (I(t) - G(t)) dt$$
+  En el sistema discreto, esto se resuelve mediante integración numérica (suma acumulativa de Riemann):
+  $$W_t = W_0 + \sum_{i=1}^{t} F_i$$
+* **Marco Contable:** Representa la evolución real de los Activos Netos en el Balance General a través del tiempo.
+* **Contexto Microeconómico:** Indica la trayectoria de acumulación a largo plazo. La pendiente general revela la salud estructural del motor económico del usuario.
+
+### 8. Intervalos de Confianza y Value at Risk (VaR)
+* **Descripción:** Módulo de modelado de riesgo que establece límites estadísticos y cuantifica la exposición a sobregiros estocásticos de gastos.
+* **Modelo Matemático:** Asumiendo una distribución normal del gasto con media $\mu_G$ y desviación estándar $\sigma_G$, el Límite de Gasto Máximo (Value at Risk) a un 95% de confianza ($Z = 1.96$) es:
+  $$\text{VaR}_{95\%} = \mu_G + 1.96 \cdot \sigma_G$$
+* **Marco Contable:** Provisionamiento de contingencias. Determina matemáticamente el tamaño del fondo de emergencia requerido para evitar la insolvencia técnica.
+* **Contexto Microeconómico:** Cuantifica la vulnerabilidad frente a choques macroeconómicos inesperados o fluctuaciones de consumo atípicas.
+
+### 9. Propensión Marginal al Consumo (PMC) y al Ahorro (PMA)
+* **Descripción:** Métrica de economía conductual que evalúa cómo los cambios incrementales en los ingresos afectan el consumo frente al ahorro.
+* **Modelo Matemático:** Calculado como derivadas discretas del consumo ($G$) y el ingreso ($I$):
+  $$\text{PMC} = \frac{\Delta G}{\Delta I} = \frac{G_t - G_{t-1}}{I_t - I_{t-1}}$$
+  Por identidad macroeconómica:
+  $$\text{PMA} = 1 - \text{PMC}$$
+* **Marco Contable:** Análisis de apalancamiento operativo personal. Evalúa la eficiencia de conversión entre ingresos brutos y capital retenido.
+* **Contexto Microeconómico:** Basado en la Función de Consumo Keynesiana. Una PMA alta asegura que los aumentos de sueldo se destinen a la creación de riqueza y no sean absorbidos por la inflación de estilo de vida.
+
+---
+*Diseñado bajo paradigmas de ingeniería transdisciplinaria para la máxima optimización de capital.*
+
+---
+
+## Novedades: Habit Game, Tesorería y Bot de Telegram
+
+Más allá del dashboard financiero original, el proyecto incorpora un sistema de hábitos gamificado y mejoras operativas al bot de captura:
+
+### Habit Game: Fuerza, Natación & Agenda
+
+La pestaña "Hábitos & Agenda" fusiona entrenamiento, natación, hábitos personalizados, tareas y eventos en **una sola cuadrícula semanal** (Lunes–Domingo):
 
 - **Split de fuerza a 5 días** (Push/Pull/Legs/Upper/Lower por defecto, reasignable por día) con checklist de ejercicios editable (crear, renombrar, eliminar).
 - **Natación** semanal con registro de distancia por sesión.
-- **Hábitos personalizados**: defines nombre, categoría y qué días de la semana aplican.
+- **Hábitos personalizados**: nombre, categoría y qué días de la semana aplican.
 - **Tareas** (checkbox, sin hora) y **eventos** (con hora) por fecha.
-- Cada tarjeta de día es colapsable (acordeón) — solo el día de hoy se expande por defecto, mostrando el resto como un resumen de una línea, para minimizar el scroll.
+- Tarjetas de día colapsables (acordeón) — solo hoy se expande por defecto, el resto se resume en una línea, para minimizar el scroll.
 - Navegación ◀ / ▶ para ver o editar cualquier semana pasada o futura.
-- **Sistema de XP, nivel y rango** (Novato → Aprendiz → Atleta → Competidor → Élite → Leyenda) derivado de tu historial de entrenamiento, natación y hábitos.
-- **Holograma muscular animado**: diagrama anatómico (pectorales, deltoides, bíceps, abdomen, cuádriceps, pantorrillas) que brilla más en cada zona según qué tan constante has sido entrenándola — combina un componente histórico acumulado (nunca baja) con un boost de las últimas 4 semanas (si dejas de entrenar una zona, se atenúa). El color general del holograma evoluciona con tu rango.
+- **Sistema de XP, nivel y rango** (Novato → Aprendiz → Atleta → Competidor → Élite → Leyenda) derivado del historial de entrenamiento, natación y hábitos.
+- **Holograma muscular animado**: diagrama anatómico (pectorales, deltoides, bíceps, abdomen, cuádriceps, pantorrillas) que brilla más en cada zona según qué tan constante ha sido el entrenamiento — combina un componente histórico acumulado (nunca baja) con un boost de las últimas 4 semanas (decae si se deja de entrenar esa zona). El color general del holograma evoluciona con el rango.
 
-## Bot de Telegram
+### Tesorería
+
+Ahora permite editar la fecha de ingresos y gastos ya capturados (útil para corregir capturas retrasadas), además del registro y borrado existentes.
+
+### Bot de Telegram
 
 `bot_listener.py` recibe mensajes con el formato `monto categoría descripción [+f] [+d]` (atajos de categoría en `/help`, `+f` = con factura CFDI, `+d` = deducible) y los guarda en la misma base de datos. Usa la fecha real de envío del mensaje (no la fecha de proceso), así que si el bot estuvo caído, los gastos acumulados se registran con su fecha correcta al reconectar.
 
