@@ -4,6 +4,12 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from datetime import datetime
 
+# Supuestos macro — actualizar periódicamente (CETES 28d: banxico.org.mx; INPC: inegi.org.mx)
+TASA_CETES_NOMINAL = 0.11
+INFLACION_ANUAL = 0.045
+# Rendimiento real (ecuación de Fisher): lo que de verdad gana tu poder de compra
+RENDIMIENTO_REAL = (1 + TASA_CETES_NOMINAL) / (1 + INFLACION_ANUAL) - 1
+
 class BalanceGeneralTab(ctk.CTkFrame):
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
@@ -46,8 +52,14 @@ class BalanceGeneralTab(ctk.CTkFrame):
         
         # Tarjetas de Métricas de Balance
         self.lbl_patrimonio = self.crear_tarjeta_metrica(self.frame_analytics, "PATRIMONIO NETO REAL", "$0.00", "#FBBF24")
-        self.lbl_inflacion = self.crear_tarjeta_metrica(self.frame_analytics, "Impuesto Inflacionario Anual (Pérdida INPC 4.5%)", "$0.00", "#EF4444")
-        self.lbl_cetes = self.crear_tarjeta_metrica(self.frame_analytics, "Estrategia CETES (Rendimiento Potencial 11%)", "$0.00", "#10B981")
+        self.lbl_inflacion = self.crear_tarjeta_metrica(
+            self.frame_analytics,
+            f"Pérdida REAL anual si el efectivo se queda al 0% (inflación {INFLACION_ANUAL*100:.1f}%)",
+            "$0.00", "#EF4444")
+        self.lbl_cetes = self.crear_tarjeta_metrica(
+            self.frame_analytics,
+            f"Ganancia REAL anual en CETES ({TASA_CETES_NOMINAL*100:.0f}% nominal − inflación = {RENDIMIENTO_REAL*100:.1f}% real)",
+            "$0.00", "#10B981")
         
         # Contenedor para gráfica
         self.canvas_frame = ctk.CTkFrame(self.frame_analytics, fg_color="transparent")
@@ -123,15 +135,15 @@ class BalanceGeneralTab(ctk.CTkFrame):
         patrimonio_neto = tot_activos - tot_pasivos
         
         # --- ARBITRAJE MONETARIO E INFLACIÓN ---
-        # Si el dinero líquido se queda en una cuenta de banco tradicional (0% rendimiento)
-        perdida_inflacion_anual = act_l * 0.045  
-        # Si se mueve a una estrategia de CETES / Renta Fija (Asumiendo 11% tasa promedio actual)
-        ganancia_cetes_anual = act_l * 0.11
-        
+        # Efectivo al 0% nominal: pierde poder de compra al ritmo de la inflación
+        perdida_inflacion_anual = act_l * INFLACION_ANUAL
+        # En CETES lo que importa es el rendimiento REAL (nominal deflactado), no el bruto
+        ganancia_real_anual = act_l * RENDIMIENTO_REAL
+
         # Actualizar UI
         self.lbl_patrimonio.configure(text=f"${patrimonio_neto:,.2f}")
-        self.lbl_inflacion.configure(text=f"-${perdida_inflacion_anual:,.2f} al año (Menos poder de compra)")
-        self.lbl_cetes.configure(text=f"+${ganancia_cetes_anual:,.2f} al año (Rendimiento Bruto)")
+        self.lbl_inflacion.configure(text=f"-${perdida_inflacion_anual:,.2f} al año (menos poder de compra)")
+        self.lbl_cetes.configure(text=f"+${ganancia_real_anual:,.2f} al año (poder de compra real)")
         
         if patrimonio_neto < 0:
             self.lbl_patrimonio.configure(text_color="#EF4444") # Quiebra técnica

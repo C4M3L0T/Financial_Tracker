@@ -101,10 +101,40 @@ def init_db():
     # Módulo de Tesorería (Ingresos y Egresos con SAT)
     cursor.execute("CREATE TABLE IF NOT EXISTS ingresos (id INTEGER PRIMARY KEY AUTOINCREMENT, desc TEXT, monto REAL, fuente TEXT, fecha TEXT)")
     cursor.execute("CREATE TABLE IF NOT EXISTS gastos (id INTEGER PRIMARY KEY AUTOINCREMENT, desc TEXT, monto REAL, categoria TEXT, fecha TEXT, con_factura INTEGER, es_deducible INTEGER)")
-    
+
+    # Cuentas reales (banco/efectivo/crédito/inversión) para saldos y conciliación
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cuentas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT UNIQUE,
+            tipo TEXT,
+            saldo_inicial REAL DEFAULT 0,
+            fecha_inicial TEXT
+        )
+    """)
+
+    # Migración: clasificación SAT del gasto deducible (Art. 151 LISR / decreto colegiaturas)
+    cursor.execute("PRAGMA table_info(gastos)")
+    columnas_gastos = [c[1] for c in cursor.fetchall()]
+    if "tipo_deduccion" not in columnas_gastos:
+        cursor.execute("ALTER TABLE gastos ADD COLUMN tipo_deduccion TEXT")
+    if "cuenta_id" not in columnas_gastos:
+        cursor.execute("ALTER TABLE gastos ADD COLUMN cuenta_id INTEGER")
+
+    cursor.execute("PRAGMA table_info(ingresos)")
+    columnas_ingresos = [c[1] for c in cursor.fetchall()]
+    if "cuenta_id" not in columnas_ingresos:
+        cursor.execute("ALTER TABLE ingresos ADD COLUMN cuenta_id INTEGER")
+
     # Módulo de Planeación (Presupuestos y Deudas/MSI)
     cursor.execute("CREATE TABLE IF NOT EXISTS presupuestos (categoria TEXT PRIMARY KEY, limite REAL)")
     cursor.execute("CREATE TABLE IF NOT EXISTS deudas_msi (id INTEGER PRIMARY KEY AUTOINCREMENT, desc TEXT, monto_total REAL, mensualidad REAL, meses_totales INTEGER, meses_pagados INTEGER, fecha_inicio TEXT)")
+
+    # Migración: tasa de interés anual (0 = MSI puro; >0 = crédito con amortización francesa)
+    cursor.execute("PRAGMA table_info(deudas_msi)")
+    columnas_msi = [c[1] for c in cursor.fetchall()]
+    if "tasa_interes" not in columnas_msi:
+        cursor.execute("ALTER TABLE deudas_msi ADD COLUMN tasa_interes REAL DEFAULT 0")
     
     # Módulo de Balance General 
     cursor.execute("""

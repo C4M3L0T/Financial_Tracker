@@ -73,24 +73,60 @@ class AuditoriaTab(ctk.CTkFrame):
         self.txt_reporte.pack(pady=15, padx=20, fill="both", expand=True)
 
     def ejecutar_auditoria(self):
-        fecha_mes = datetime.datetime.now().strftime("%Y-%m")
+        mes_actual = datetime.datetime.now().strftime("%Y-%m")
         conn = sqlite3.connect("data.db")
         cursor = conn.cursor()
-        
+
+        # Usar el balance más reciente disponible: exigir exactamente el mes en
+        # curso dejaba la auditoría inservible los primeros días de cada mes
         cursor.execute("""
-            SELECT activos_liquidos, activos_fijos, pasivos_corto, pasivos_largo 
-            FROM balance_general WHERE fecha = ?
-        """, (fecha_mes,))
-        row = cursor.fetchone()
-        conn.close()
-        
+            SELECT fecha, activos_liquidos, activos_fijos, pasivos_corto, pasivos_largo
+            FROM balance_general ORDER BY fecha DESC LIMIT 2
+        """)
+        filas = cursor.fetchall()
+
         self.txt_reporte.delete("1.0", "end")
-        
-        if not row:
-            self.txt_reporte.insert("end", f"[!] ERROR DE AUDITORÍA: No se detectó un balance cerrado para el mes de {fecha_mes}.\n\nPor favor, dirígete a la pestaña 'Balance General' para capturar tus Activos y Pasivos antes de correr el dictamen.")
+
+        if not filas:
+            conn.close()
+            self.txt_reporte.insert("end", "[!] ERROR DE AUDITORÍA: No hay ningún balance capturado.\n\nPor favor, dirígete a la pestaña 'Balance General' para capturar tus Activos y Pasivos antes de correr el dictamen.")
             return
-            
-        act_l, act_f, pas_c, pas_l = row
+
+        fecha_mes, act_l, act_f, pas_c, pas_l = filas[0]
+
+        # Conciliación contable: el cambio de liquidez entre los dos últimos
+        # balances debería explicarse por el flujo neto registrado en Tesorería
+        conciliacion = None
+        if len(filas) == 2:
+            fecha_prev, act_l_prev = filas[1][0], filas[1][1]
+            cursor.execute("""
+                SELECT COALESCE(SUM(monto), 0) FROM ingresos
+                WHERE strftime('%Y-%m', fecha) > ? AND strftime('%Y-%m', fecha) <= ?
+            """, (fecha_prev, fecha_mes))
+            ingresos_periodo = cursor.fetchone()[0]
+            cursor.execute("""
+                SELECT COALESCE(SUM(monto), 0) FROM gastos
+                WHERE strftime('%Y-%m', fecha) > ? AND strftime('%Y-%m', fecha) <= ?
+            """, (fecha_prev, fecha_mes))
+            gastos_periodo = cursor.fetchone()[0]
+            conciliacion = {
+                "fecha_prev": fecha_prev,
+                "delta_liquidez": act_l - act_l_prev,
+                "flujo_neto": ingresos_periodo - gastos_periodo,
+                "gastos_periodo": gastos_periodo,
+            }
+
+        # Liquidez según cuentas reales (excluye crédito: eso es pasivo, no activo)
+        cursor.execute("""
+            SELECT COALESCE(SUM(c.saldo_inicial
+                 + COALESCE((SELECT SUM(i.monto) FROM ingresos i WHERE i.cuenta_id = c.id), 0)
+                 - COALESCE((SELECT SUM(g.monto) FROM gastos g WHERE g.cuenta_id = c.id), 0)), 0),
+                   COUNT(*)
+            FROM cuentas c WHERE c.tipo != 'Crédito'
+        """)
+        liquidez_cuentas, num_cuentas = cursor.fetchone()
+        conn.close()
+
         tot_activos = act_l + act_f
         tot_pasivos = pas_c + pas_l
         
@@ -102,6 +138,9 @@ class AuditoriaTab(ctk.CTkFrame):
         # Renderizado de la Terminal de Auditoría
         reporte = f"=== AUDITORÍA FINANCIERA INTERNA ({fecha_mes}) ===\n"
         reporte += "="*45 + "\n\n"
+        if fecha_mes != mes_actual:
+            reporte += f"[AVISO] No has cerrado el balance de {mes_actual}.\n"
+            reporte += f"        Este dictamen usa el más reciente: {fecha_mes}.\n\n"
         reporte += f"PATRIMONIO NETO: ${patrimonio_neto:,.2f} MXN\n"
         if patrimonio_neto < 0:
             reporte += " [STATUS] QUIEBRA TÉCNICA DETECTADA\n"
@@ -131,7 +170,35 @@ class AuditoriaTab(ctk.CTkFrame):
             reporte += f" -> GRADO: {apalancamiento*100:.1f}% (Alto Riesgo)\n"
             reporte += " -> El banco posee la mayor parte de tus bienes.\n"
             
+        reporte += "\n[3] CONCILIACIÓN TESORERÍA vs BALANCE\n"
+        if conciliacion is None:
+            reporte += " -> Se necesitan al menos dos balances mensuales\n    para conciliar. Sigue cerrando tus meses.\n"
+        else:
+            delta = conciliacion["delta_liquidez"]
+            flujo = conciliacion["flujo_neto"]
+            divergencia = delta - flujo
+            tolerancia = max(conciliacion["gastos_periodo"] * 0.05, 500.0)
+            reporte += f" -> Cambio en activos líquidos ({conciliacion['fecha_prev']} → {fecha_mes}): ${delta:,.2f}\n"
+            reporte += f" -> Flujo neto registrado en Tesorería:    ${flujo:,.2f}\n"
+            reporte += f" -> Divergencia: ${divergencia:,.2f}\n"
+            if abs(divergencia) <= tolerancia:
+                reporte += " -> [OK] CONCILIADO. Tu contabilidad de flujo\n    explica el cambio en tu liquidez.\n"
+            else:
+                reporte += " -> [ALERTA] DESCUADRE RELEVANTE. Hay dinero que\n    entró o salió sin registrarse en Tesorería\n"
+                reporte += "    (o el balance está mal capturado). Compras de\n    activos y rendimientos también explican parte.\n"
+
+        if num_cuentas > 0:
+            reporte += "\n[4] CUENTAS REALES vs BALANCE DECLARADO\n"
+            dif_cuentas = liquidez_cuentas - act_l
+            reporte += f" -> Liquidez según tus {num_cuentas} cuenta(s): ${liquidez_cuentas:,.2f}\n"
+            reporte += f" -> Activos líquidos del balance:  ${act_l:,.2f}\n"
+            reporte += f" -> Diferencia: ${dif_cuentas:,.2f}\n"
+            if abs(dif_cuentas) <= max(act_l * 0.03, 300.0):
+                reporte += " -> [OK] Tus cuentas respaldan el balance declarado.\n"
+            else:
+                reporte += " -> [REVISAR] El balance no coincide con tus cuentas.\n    Actualiza el Balance General o revisa movimientos\n    sin cuenta asignada.\n"
+
         reporte += "\n" + "="*45 + "\n"
         reporte += ">>> DIAGNÓSTICO FINALIZADO CON ÉXITO"
-        
+
         self.txt_reporte.insert("end", reporte)

@@ -1,6 +1,8 @@
 import sqlite3
 import telebot
 import config
+import threading
+import time
 from datetime import datetime
 
 # =========================================================
@@ -51,6 +53,121 @@ def guardar_gasto_bd(desc, monto, categoria):
         print(f"Error en BD: {e}")
         return False
 
+# =========================================================
+# PRESUPUESTOS Y ALERTAS
+# =========================================================
+def linea_presupuesto(categoria):
+    """Estado del presupuesto de una categoría en el mes actual, o None si no hay límite."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT limite FROM presupuestos WHERE categoria=?", (categoria,))
+    row = cursor.fetchone()
+    if not row or not row[0] or row[0] <= 0:
+        conn.close()
+        return None
+    limite = row[0]
+    mes = datetime.now().strftime("%Y-%m")
+    cursor.execute("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE categoria=? AND strftime('%Y-%m',fecha)=?",
+                   (categoria, mes))
+    gastado = cursor.fetchone()[0]
+    conn.close()
+
+    uso = gastado / limite
+    if uso > 1.0: icono = "🚨"
+    elif uso >= 0.8: icono = "⚠️"
+    else: icono = "✅"
+    return f"{icono} Presupuesto {categoria}: ${gastado:,.0f} / ${limite:,.0f} ({uso*100:.0f}%)"
+
+def construir_resumen():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    mes = datetime.now().strftime("%Y-%m")
+    cursor.execute("""
+        SELECT p.categoria, p.limite,
+               COALESCE((SELECT SUM(g.monto) FROM gastos g
+                         WHERE g.categoria = p.categoria AND strftime('%Y-%m', g.fecha) = ?), 0)
+        FROM presupuestos p ORDER BY p.categoria
+    """, (mes,))
+    presupuestos = cursor.fetchall()
+    cursor.execute("SELECT desc, mensualidad, meses_totales, meses_pagados FROM deudas_msi")
+    deudas = cursor.fetchall()
+    conn.close()
+
+    lineas = [f"📊 *Resumen {mes}*", ""]
+    if presupuestos:
+        for cat, limite, gastado in presupuestos:
+            uso = gastado / limite if limite > 0 else 0
+            icono = "🚨" if uso > 1.0 else ("⚠️" if uso >= 0.8 else "✅")
+            lineas.append(f"{icono} {cat}: ${gastado:,.0f}/${limite:,.0f} ({uso*100:.0f}%)")
+    else:
+        lineas.append("Sin presupuestos definidos (pestaña Planeación).")
+    if deudas:
+        lineas.append("")
+        lineas.append("💳 *Deudas activas:*")
+        for desc, men, mt, mp in deudas:
+            restantes = mt - mp
+            lineas.append(f"• {desc}: ${men:,.0f}/mes, faltan {restantes} pago(s)")
+    return "\n".join(lineas)
+
+def construir_alertas():
+    """Solo lo urgente: presupuestos ≥90% y deudas con 1 pago o menos por delante."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    mes = datetime.now().strftime("%Y-%m")
+    cursor.execute("""
+        SELECT p.categoria, p.limite,
+               COALESCE((SELECT SUM(g.monto) FROM gastos g
+                         WHERE g.categoria = p.categoria AND strftime('%Y-%m', g.fecha) = ?), 0)
+        FROM presupuestos p
+    """, (mes,))
+    presupuestos = cursor.fetchall()
+    cursor.execute("SELECT desc, meses_totales - meses_pagados FROM deudas_msi WHERE meses_totales - meses_pagados <= 1")
+    deudas_por_vencer = cursor.fetchall()
+    conn.close()
+
+    lineas = []
+    for cat, limite, gastado in presupuestos:
+        if limite > 0 and gastado / limite >= 0.9:
+            icono = "🚨" if gastado > limite else "⚠️"
+            lineas.append(f"{icono} {cat}: ${gastado:,.0f} de ${limite:,.0f} ({gastado/limite*100:.0f}%)")
+    for desc, restantes in deudas_por_vencer:
+        lineas.append(f"🎉 '{desc}': {'último pago este mes' if restantes == 1 else 'liquidada'} — tu liquidez mensual sube pronto")
+    if not lineas:
+        return None
+    return "🔔 *Alertas ArchTracker*\n\n" + "\n".join(lineas)
+
+def obtener_estado(clave):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("CREATE TABLE IF NOT EXISTS bot_estado (clave TEXT PRIMARY KEY, valor TEXT)")
+    cursor.execute("SELECT valor FROM bot_estado WHERE clave=?", (clave,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def guardar_estado(clave, valor):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("CREATE TABLE IF NOT EXISTS bot_estado (clave TEXT PRIMARY KEY, valor TEXT)")
+    cursor.execute("INSERT OR REPLACE INTO bot_estado (clave, valor) VALUES (?, ?)", (clave, valor))
+    conn.commit()
+    conn.close()
+
+def vigilante_diario():
+    """Una revisión al día (después de las 9:00). La marca en bot_estado evita
+    duplicados aunque systemd reinicie el proceso varias veces al día."""
+    while True:
+        try:
+            hoy = datetime.now().strftime("%Y-%m-%d")
+            if datetime.now().hour >= 9 and obtener_estado("ultimo_aviso") != hoy:
+                alertas = construir_alertas()
+                if alertas:
+                    bot.send_message(MI_TELEGRAM_ID, alertas, parse_mode="Markdown")
+                guardar_estado("ultimo_aviso", hoy)
+        except Exception as e:
+            print(f"Error en vigilante diario: {e}")
+        time.sleep(3600)
+
 # Middleware de Seguridad
 @bot.message_handler(func=lambda message: message.from_user.id != MI_TELEGRAM_ID)
 def bloquear_intrusos(message):
@@ -82,9 +199,16 @@ def enviar_bienvenida(message):
         " `p`  = Personal\n"
         " `m`  = Mascota\n"
         " `d`  = Deuda\n"
-        " `o`  = Otros"
+        " `o`  = Otros\n\n"
+        " Envía /resumen para ver el semáforo de presupuestos y tus deudas."
     )
     bot.reply_to(message, ayuda, parse_mode="Markdown")
+
+
+# Resumen bajo demanda: presupuestos + deudas (registrado ANTES del catch-all)
+@bot.message_handler(commands=['resumen'])
+def enviar_resumen(message):
+    bot.reply_to(message, construir_resumen(), parse_mode="Markdown")
 
 
 # Procesador de Mensajes de Texto con Ingeniería de Flags Fiscales (SAT)
@@ -139,12 +263,20 @@ def procesar_gasto(message):
         status_fiscal = ""
         if con_factura: status_fiscal += "[CFDI Solicitado]"
         if es_deducible: status_fiscal += "[Deducible Art. 151]"
-        
-        bot.reply_to(message, f"✅ **Registrado:**\n `${monto:,.2f}` en *{categoria_real}*\n `{desc.strip()}`\n⚖️ *Status:* {status_fiscal if status_fiscal else 'Gasto Corriente'}")
+
+        respuesta = f"✅ **Registrado:**\n `${monto:,.2f}` en *{categoria_real}*\n `{desc.strip()}`\n⚖️ *Status:* {status_fiscal if status_fiscal else 'Gasto Corriente'}"
+
+        # Retroalimentación de presupuesto en el momento de la captura
+        presupuesto = linea_presupuesto(categoria_real)
+        if presupuesto:
+            respuesta += f"\n{presupuesto}"
+
+        bot.reply_to(message, respuesta)
         
     except Exception as e:
         bot.reply_to(message, f" Error en BD: {e}")
 
 if __name__ == "__main__":
     print(" El Bot de Telegram está escuchando con las 15 categorías...")
+    threading.Thread(target=vigilante_diario, daemon=True).start()
     bot.infinity_polling()
