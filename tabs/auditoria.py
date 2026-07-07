@@ -109,18 +109,34 @@ class AuditoriaTab(ctk.CTkFrame):
                 WHERE strftime('%Y-%m', fecha) > ? AND strftime('%Y-%m', fecha) <= ?
             """, (fecha_prev, fecha_mes))
             gastos_periodo = cursor.fetchone()[0]
+            # Pagos netos a tarjetas: dinero que salió de la liquidez sin ser gasto
+            # (el gasto se registró en la compra; el pago solo reduce el pasivo)
+            cursor.execute("""
+                SELECT COALESCE(SUM(CASE
+                    WHEN cd.tipo = 'Crédito' AND COALESCE(co.tipo, '') != 'Crédito' THEN t.monto
+                    WHEN co.tipo = 'Crédito' AND COALESCE(cd.tipo, '') != 'Crédito' THEN -t.monto
+                    ELSE 0 END), 0)
+                FROM transferencias t
+                LEFT JOIN cuentas co ON co.id = t.cuenta_origen
+                LEFT JOIN cuentas cd ON cd.id = t.cuenta_destino
+                WHERE strftime('%Y-%m', t.fecha) > ? AND strftime('%Y-%m', t.fecha) <= ?
+            """, (fecha_prev, fecha_mes))
+            pagos_tarjeta_netos = cursor.fetchone()[0]
             conciliacion = {
                 "fecha_prev": fecha_prev,
                 "delta_liquidez": act_l - act_l_prev,
                 "flujo_neto": ingresos_periodo - gastos_periodo,
                 "gastos_periodo": gastos_periodo,
+                "pagos_tarjeta": pagos_tarjeta_netos,
             }
 
         # Liquidez según cuentas reales (excluye crédito: eso es pasivo, no activo)
         cursor.execute("""
             SELECT COALESCE(SUM(c.saldo_inicial
                  + COALESCE((SELECT SUM(i.monto) FROM ingresos i WHERE i.cuenta_id = c.id), 0)
-                 - COALESCE((SELECT SUM(g.monto) FROM gastos g WHERE g.cuenta_id = c.id), 0)), 0),
+                 - COALESCE((SELECT SUM(g.monto) FROM gastos g WHERE g.cuenta_id = c.id), 0)
+                 + COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_destino = c.id), 0)
+                 - COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_origen = c.id), 0)), 0),
                    COUNT(*)
             FROM cuentas c WHERE c.tipo != 'Crédito'
         """)
@@ -176,10 +192,14 @@ class AuditoriaTab(ctk.CTkFrame):
         else:
             delta = conciliacion["delta_liquidez"]
             flujo = conciliacion["flujo_neto"]
-            divergencia = delta - flujo
+            pagos = conciliacion["pagos_tarjeta"]
+            flujo_esperado = flujo - pagos
+            divergencia = delta - flujo_esperado
             tolerancia = max(conciliacion["gastos_periodo"] * 0.05, 500.0)
             reporte += f" -> Cambio en activos líquidos ({conciliacion['fecha_prev']} → {fecha_mes}): ${delta:,.2f}\n"
             reporte += f" -> Flujo neto registrado en Tesorería:    ${flujo:,.2f}\n"
+            if pagos != 0:
+                reporte += f" -> Pagos netos a tarjetas (transferencias): ${pagos:,.2f}\n"
             reporte += f" -> Divergencia: ${divergencia:,.2f}\n"
             if abs(divergencia) <= tolerancia:
                 reporte += " -> [OK] CONCILIADO. Tu contabilidad de flujo\n    explica el cambio en tu liquidez.\n"

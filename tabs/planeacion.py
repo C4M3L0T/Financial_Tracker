@@ -10,10 +10,6 @@ from tabs.tesoreria import CATEGORIAS_GASTOS
 class PlaneacionTab(ctk.CTkFrame):
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
         self.ultima_simulacion = None
         self.setup_ui()
         self.actualizar_msi()
@@ -21,85 +17,101 @@ class PlaneacionTab(ctk.CTkFrame):
         self.actualizar_presupuestos()
 
     def setup_ui(self):
+        # Página scrolleable (como el Dashboard): cada sección con su tamaño
+        # cómodo en vez de comprimirse para caber en una sola pantalla
+        self.pagina = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.pagina.pack(fill="both", expand=True)
+        self.pagina.grid_columnconfigure(0, weight=1, uniform="cols")
+        self.pagina.grid_columnconfigure(1, weight=1, uniform="cols")
+
         # =========================================================
         # PANEL IZQUIERDO: GESTIÓN DE DEUDA Y MSI
         # =========================================================
-        self.frame_msi = ctk.CTkFrame(self)
+        self.frame_msi = ctk.CTkFrame(self.pagina)
         self.frame_msi.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
-        
+
         ctk.CTkLabel(self.frame_msi, text="Control de Pasivos (MSI)", font=("Urbanist", 18, "bold"), text_color="#A855F7").pack(pady=15)
-        
-        self.e_msi_desc = ctk.CTkEntry(self.frame_msi, placeholder_text="Descripción (ej: Pantalla 4K)")
+
+        self.e_msi_desc = ctk.CTkEntry(self.frame_msi, placeholder_text="Descripción (ej: Pantalla 4K)", height=34)
         self.e_msi_desc.pack(pady=5, padx=20, fill="x")
-        
-        self.e_msi_monto = ctk.CTkEntry(self.frame_msi, placeholder_text="Monto Total a Pagar ($ MXN)")
+
+        self.e_msi_monto = ctk.CTkEntry(self.frame_msi, placeholder_text="Monto Total a Pagar ($ MXN)", height=34)
         self.e_msi_monto.pack(pady=5, padx=20, fill="x")
-        
-        self.e_msi_meses = ctk.CTkEntry(self.frame_msi, placeholder_text="Plazo en Meses (ej: 12)")
+
+        self.e_msi_meses = ctk.CTkEntry(self.frame_msi, placeholder_text="Plazo en Meses (ej: 12)", height=34)
         self.e_msi_meses.pack(pady=5, padx=20, fill="x")
 
-        self.e_msi_tasa = ctk.CTkEntry(self.frame_msi, placeholder_text="Tasa de interés anual % (vacío o 0 = MSI)")
+        self.e_msi_tasa = ctk.CTkEntry(self.frame_msi, placeholder_text="Tasa de interés anual % (vacío o 0 = MSI)", height=34)
         self.e_msi_tasa.pack(pady=5, padx=20, fill="x")
 
-        ctk.CTkButton(self.frame_msi, text="Registrar Deuda", fg_color="#A855F7", hover_color="#9333EA", command=self.guardar_msi).pack(pady=15, padx=20, fill="x")
-        
-        # Historial de Deudas Activas
-        self.lista_msi = ctk.CTkScrollableFrame(self.frame_msi, height=150)
+        ctk.CTkButton(self.frame_msi, text="Registrar Deuda", fg_color="#A855F7", hover_color="#9333EA", command=self.guardar_msi).pack(pady=12, padx=20, fill="x")
+
+        # Historial de Deudas Activas (crece con el contenido; la página scrollea)
+        self.lista_msi = ctk.CTkFrame(self.frame_msi, fg_color="transparent")
         self.lista_msi.pack(pady=5, padx=10, fill="both", expand=True)
 
         # =========================================================
         # PANEL DERECHO: SIMULADOR DE ESCENARIOS "WHAT-IF"
         # =========================================================
-        self.frame_sim = ctk.CTkFrame(self)
+        self.frame_sim = ctk.CTkFrame(self.pagina)
         self.frame_sim.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
-        
+
         ctk.CTkLabel(self.frame_sim, text="Simulador 'What-If' (Pareto)", font=("Urbanist", 18, "bold"), text_color="#F59E0B").pack(pady=15)
-        
+
         # Selector de Categoría (Se llena dinámicamente desde la BD)
         self.var_cat = ctk.StringVar(value="Seleccionar Categoría")
         self.menu_cat = ctk.CTkOptionMenu(self.frame_sim, variable=self.var_cat, values=["Cargando..."])
         self.menu_cat.pack(pady=5, padx=20, fill="x")
-        
+
         self.lbl_slider = ctk.CTkLabel(self.frame_sim, text="Meta de Reducción: 0%", font=("Urbanist", 13, "bold"))
-        self.lbl_slider.pack(pady=(15, 0))
-        
+        self.lbl_slider.pack(pady=(12, 0))
+
         # Control deslizante de elasticidad de gasto
         self.slider_red = ctk.CTkSlider(self.frame_sim, from_=0, to=100, button_color="#F59E0B", progress_color="#FCD34D", command=self.actualizar_label_slider)
         self.slider_red.set(0)
         self.slider_red.pack(pady=5, padx=20, fill="x")
-        
-        ctk.CTkButton(self.frame_sim, text="Ejecutar Simulación Matemática", fg_color="#F59E0B", hover_color="#D97706", text_color="black", font=("Urbanist", 12, "bold"), command=self.correr_simulacion).pack(pady=(15, 5), padx=20, fill="x")
+
+        ctk.CTkButton(self.frame_sim, text="Ejecutar Simulación Matemática", fg_color="#F59E0B", hover_color="#D97706", text_color="black", font=("Urbanist", 12, "bold"), command=self.correr_simulacion).pack(pady=(12, 5), padx=20, fill="x")
 
         # Cierre del ciclo conductual: simulación → compromiso (presupuesto persistido)
         self.btn_adoptar = ctk.CTkButton(self.frame_sim, text="Adoptar como presupuesto (corre una simulación)",
                                           fg_color="#334155", hover_color="#475569", state="disabled",
                                           font=("Urbanist", 11), command=self.adoptar_presupuesto)
-        self.btn_adoptar.pack(pady=(0, 10), padx=20, fill="x")
+        self.btn_adoptar.pack(pady=(0, 8), padx=20, fill="x")
 
         # Contenedor del Gráfico Comparativo
         self.canvas_sim_frame = ctk.CTkFrame(self.frame_sim, fg_color="transparent")
         self.canvas_sim_frame.pack(pady=5, padx=10, fill="both", expand=True)
+        ctk.CTkLabel(self.canvas_sim_frame,
+                     text="Elige una categoría, mueve el slider\ny ejecuta la simulación para ver la gráfica.",
+                     font=("Urbanist", 12), text_color="#64748B").pack(pady=40)
+
+        # Resultados numéricos de la simulación (fuera de matplotlib: no se recortan)
+        self.lbl_resultado_sim = ctk.CTkLabel(self.frame_sim, text="", font=("Urbanist", 14, "bold"),
+                                               text_color="#F59E0B")
+        self.lbl_resultado_sim.pack(pady=(0, 12), padx=20)
 
         # =========================================================
         # PANEL INFERIOR: PRESUPUESTOS MENSUALES POR CATEGORÍA
         # =========================================================
-        self.frame_presupuestos = ctk.CTkFrame(self)
+        self.frame_presupuestos = ctk.CTkFrame(self.pagina)
         self.frame_presupuestos.grid(row=1, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="nsew")
 
         ctk.CTkLabel(self.frame_presupuestos, text="Presupuestos Mensuales por Categoría",
-                     font=("Urbanist", 16, "bold"), text_color="#38BDF8").pack(anchor="w", padx=15, pady=(10, 2))
+                     font=("Urbanist", 18, "bold"), text_color="#38BDF8").pack(anchor="w", padx=15, pady=(12, 2))
 
         fila_form = ctk.CTkFrame(self.frame_presupuestos, fg_color="transparent")
-        fila_form.pack(fill="x", padx=15, pady=(0, 5))
-        self.c_pres_cat = ctk.CTkOptionMenu(fila_form, values=CATEGORIAS_GASTOS, width=180)
+        fila_form.pack(fill="x", padx=15, pady=(2, 6))
+        self.c_pres_cat = ctk.CTkOptionMenu(fila_form, values=CATEGORIAS_GASTOS, width=200)
         self.c_pres_cat.pack(side="left", padx=(0, 5))
-        self.e_pres_limite = ctk.CTkEntry(fila_form, placeholder_text="Límite mensual $", width=160)
+        self.e_pres_limite = ctk.CTkEntry(fila_form, placeholder_text="Límite mensual $", width=170, height=32)
         self.e_pres_limite.pack(side="left", padx=5)
-        ctk.CTkButton(fila_form, text="Guardar límite", width=120, fg_color="#3B82F6",
+        ctk.CTkButton(fila_form, text="Guardar límite", width=130, fg_color="#3B82F6",
                       hover_color="#2563EB", command=self.guardar_presupuesto).pack(side="left", padx=5)
 
-        self.lista_presupuestos = ctk.CTkScrollableFrame(self.frame_presupuestos, height=300)
-        self.lista_presupuestos.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        # Lista sin scroll propio: crece con el contenido y la página scrollea
+        self.lista_presupuestos = ctk.CTkFrame(self.frame_presupuestos, fg_color="transparent")
+        self.lista_presupuestos.pack(fill="both", expand=True, padx=10, pady=(0, 12))
 
     # --- Lógica de UI ---
     def actualizar_label_slider(self, value):
@@ -182,22 +194,24 @@ class PlaneacionTab(ctk.CTkFrame):
 
         for mid, d, men, mt, mp, monto_total, tasa in cursor.fetchall():
             row = ctk.CTkFrame(self.lista_msi, fg_color="#1e293b")
-            row.pack(fill="x", pady=4, padx=2)
+            row.pack(fill="x", pady=5, padx=4)
 
             if tasa > 0:
                 costo_total = men * mt
                 intereses = costo_total - (monto_total or 0)
-                info_texto = (f"🟣 {d} [{tasa:g}% anual]\n${men:,.2f}/mes | Progreso: {mp}/{mt} meses\n"
-                              f"Costo total: ${costo_total:,.2f} (intereses: ${intereses:,.2f})")
+                info_texto = (f"🟣 {d}\n${men:,.2f}/mes · {mp}/{mt} meses\n"
+                              f"{tasa:g}% anual · int. ${intereses:,.0f}")
             else:
-                info_texto = f"🟣 {d} [MSI 0%]\n${men:,.2f}/mes | Progreso: {mp}/{mt} meses"
-            ctk.CTkLabel(row, text=info_texto, font=("Urbanist", 12), justify="left").pack(side="left", padx=10, pady=5)
-            
+                info_texto = f"🟣 {d}\n${men:,.2f}/mes · {mp}/{mt} meses\nMSI 0%"
+            # Botones primero: si el espacio aprieta, se trunca el texto, no los controles
             btn_frame = ctk.CTkFrame(row, fg_color="transparent")
-            btn_frame.pack(side="right", padx=5)
-            
-            ctk.CTkButton(btn_frame, text="Abonar 1 Mes", width=90, fg_color="#10B981", hover_color="#059669", font=("Urbanist", 10), command=lambda i=mid, p=mp, t=mt: self.abonar_msi(i, p, t)).pack(pady=2)
-            ctk.CTkButton(btn_frame, text="Eliminar", width=90, fg_color="#EF4444", hover_color="#DC2626", font=("Urbanist", 10), command=lambda i=mid: self.eliminar_msi(i)).pack(pady=2)
+            btn_frame.pack(side="right", padx=8, pady=4)
+
+            ctk.CTkButton(btn_frame, text="Abonar 1 Mes", width=95, fg_color="#10B981", hover_color="#059669", font=("Urbanist", 10), command=lambda i=mid, p=mp, t=mt: self.abonar_msi(i, p, t)).pack(pady=2)
+            ctk.CTkButton(btn_frame, text="Eliminar", width=95, fg_color="#EF4444", hover_color="#DC2626", font=("Urbanist", 10), command=lambda i=mid: self.eliminar_msi(i)).pack(pady=2)
+
+            ctk.CTkLabel(row, text=info_texto, font=("Urbanist", 13), justify="left",
+                         anchor="w").pack(side="left", padx=12, pady=8, fill="x", expand=True)
             
         conn.close()
 
@@ -264,15 +278,15 @@ class PlaneacionTab(ctk.CTkFrame):
             else: color = "#EF4444"
 
             row = ctk.CTkFrame(self.lista_presupuestos, fg_color="#1e293b")
-            row.pack(fill="x", pady=3, padx=4)
-            ctk.CTkLabel(row, text=categoria, font=("Urbanist", 12, "bold"), width=110, anchor="w").pack(side="left", padx=(10, 5), pady=6)
-            barra = ctk.CTkProgressBar(row, progress_color=color, width=220)
+            row.pack(fill="x", pady=4, padx=4)
+            ctk.CTkLabel(row, text=categoria, font=("Urbanist", 13, "bold"), width=130, anchor="w").pack(side="left", padx=(12, 5), pady=10)
+            barra = ctk.CTkProgressBar(row, progress_color=color, width=260, height=14)
             barra.set(min(uso, 1.0))
-            barra.pack(side="left", padx=5, fill="x", expand=True)
+            barra.pack(side="left", padx=8, fill="x", expand=True)
             ctk.CTkLabel(row, text=f"${gastado:,.0f} / ${limite:,.0f}  ({uso*100:.0f}%)",
-                         font=("Urbanist", 12), text_color=color, width=180).pack(side="left", padx=5)
-            ctk.CTkButton(row, text="🗑", width=28, fg_color="#EF4444", hover_color="#DC2626",
-                          command=lambda c=categoria: self.eliminar_presupuesto(c)).pack(side="right", padx=8)
+                         font=("Urbanist", 13), text_color=color, width=200).pack(side="left", padx=8)
+            ctk.CTkButton(row, text="🗑", width=30, fg_color="#EF4444", hover_color="#DC2626",
+                          command=lambda c=categoria: self.eliminar_presupuesto(c)).pack(side="right", padx=10)
 
     def actualizar(self):
         """Punto de entrada del dispatch de main.py al cambiar a esta pestaña."""
@@ -336,29 +350,29 @@ class PlaneacionTab(ctk.CTkFrame):
         # Habilitar el compromiso: convertir el escenario simulado en presupuesto real
         self.ultima_simulacion = (categoria, presupuesto_tope)
         self.btn_adoptar.configure(state="normal", fg_color="#10B981", hover_color="#059669",
-                                    text=f"Adoptar ${presupuesto_tope:,.0f}/mes como presupuesto de {categoria}")
+                                    text=f"Adoptar ${presupuesto_tope:,.0f}/mes para {categoria}")
         
         # --- Renderizado de Matplotlib ---
-        fig, ax = plt.subplots(figsize=(5.5, 2.8), dpi=90)
+        fig, ax = plt.subplots(figsize=(5.9, 4.2), dpi=95)
         fig.patch.set_facecolor('#0f172a')
-        fig.subplots_adjust(bottom=0.2, left=0.15, top=0.85) # Ajuste para el nuevo título
+        fig.subplots_adjust(bottom=0.17, left=0.13, top=0.86, right=0.97)
         ax.set_facecolor('#0f172a')
-        ax.tick_params(colors='white', labelsize=8)
+        ax.tick_params(colors='white', labelsize=10)
         for spine in ax.spines.values(): spine.set_color('#334155')
-        
+
         # Graficamos el diferencial de trayectorias
-        ax.plot(np.append(x_vals, next_x), tendencia_orig, color="#EF4444", linestyle="--", linewidth=1.5, label="Trayectoria Actual")
-        ax.plot(np.append(x_vals, next_x), tendencia_sim, color="#10B981", linestyle="-", linewidth=2.5, label="Trayectoria Optimizada")
-        
+        ax.plot(np.append(x_vals, next_x), tendencia_orig, color="#EF4444", linestyle="--", linewidth=2, label="Trayectoria Actual")
+        ax.plot(np.append(x_vals, next_x), tendencia_sim, color="#10B981", linestyle="-", linewidth=3, label="Trayectoria Optimizada")
+
         ax.set_xticks(list(x_vals) + [next_x])
         ax.set_xticklabels(periodos + ["+1"], rotation=25, ha="right")
-        
-        # Título dinámico y accionable
-        titulo = (f"Escenario: Recorte del {int(reduccion*100)}% en {categoria}\n"
-                  f"Meta a no gastar: ${meta_monetaria_ahorro:,.0f} | Tu nuevo límite: ${presupuesto_tope:,.0f}")
-        
-        ax.set_title(titulo, color="white", fontsize=10, fontweight="bold", pad=10)
-        ax.legend(facecolor='#1e293b', edgecolor='none', labelcolor='white', fontsize=8)
+
+        # Título corto; los números accionables van en la etiqueta bajo la gráfica
+        ax.set_title(f"Recorte del {int(reduccion*100)}% en {categoria}",
+                     color="white", fontsize=12, fontweight="bold", pad=10)
+        ax.legend(facecolor='#1e293b', edgecolor='none', labelcolor='white', fontsize=10, loc="lower left")
+        self.lbl_resultado_sim.configure(
+            text=f"Meta a no gastar: ${meta_monetaria_ahorro:,.0f}\nTu nuevo límite mensual: ${presupuesto_tope:,.0f}")
         ax.grid(True, linestyle=":", alpha=0.15)
         
         canvas = FigureCanvasTkAgg(fig, master=self.canvas_sim_frame)

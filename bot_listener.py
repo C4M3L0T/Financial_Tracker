@@ -3,6 +3,7 @@ import telebot
 import config
 import threading
 import time
+import re
 from datetime import datetime
 
 # =========================================================
@@ -32,6 +33,7 @@ CATEGORIAS = {
     "p": "Personal",
     "m": "Mascota",
     "d": "Deuda",
+    "dp": "Deportes",
     "o": "Otros"
 }
 
@@ -136,6 +138,30 @@ def construir_alertas():
         return None
     return "🔔 *Alertas ArchTracker*\n\n" + "\n".join(lineas)
 
+# =========================================================
+# CUENTAS: RESOLUCIÓN Y CUENTA POR DEFECTO
+# =========================================================
+def resolver_cuenta(texto_busqueda):
+    """Devuelve (id, nombre) de la primera cuenta cuyo nombre contenga el texto, o None."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, nombre FROM cuentas WHERE LOWER(nombre) LIKE ? ORDER BY nombre",
+                   (f"%{texto_busqueda.lower()}%",))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+def cuenta_por_defecto():
+    valor = obtener_estado("cuenta_default")
+    if not valor:
+        return None
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, nombre FROM cuentas WHERE id=?", (valor,))
+    row = cursor.fetchone()
+    conn.close()
+    return row  # None si la cuenta default fue eliminada desde la app
+
 def obtener_estado(clave):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -199,7 +225,11 @@ def enviar_bienvenida(message):
         " `p`  = Personal\n"
         " `m`  = Mascota\n"
         " `d`  = Deuda\n"
+        " `dp` = Deportes\n"
         " `o`  = Otros\n\n"
+        " 💳 **Cuentas:** agrega `@nombre` al final para asignar cuenta\n"
+        " *Ejemplo:* `450 c Tacos @nu`\n"
+        " `/cuenta nombre` fija tu cuenta por defecto | `/cuenta` las lista\n\n"
         " Envía /resumen para ver el semáforo de presupuestos y tus deudas."
     )
     bot.reply_to(message, ayuda, parse_mode="Markdown")
@@ -211,15 +241,66 @@ def enviar_resumen(message):
     bot.reply_to(message, construir_resumen(), parse_mode="Markdown")
 
 
+# Gestión de cuentas: /cuenta lista, /cuenta <nombre> fija la default
+@bot.message_handler(commands=['cuenta', 'cuentas'])
+def gestionar_cuenta(message):
+    partes = message.text.split(" ", 1)
+    if len(partes) == 2 and partes[1].strip():
+        cuenta = resolver_cuenta(partes[1].strip())
+        if cuenta:
+            guardar_estado("cuenta_default", str(cuenta[0]))
+            bot.reply_to(message, f"✅ Cuenta por defecto: *{cuenta[1]}*\nTodos los gastos sin `@cuenta` se cargarán ahí.", parse_mode="Markdown")
+        else:
+            bot.reply_to(message, f"❌ Ninguna cuenta contiene '{partes[1].strip()}'. Envía /cuenta para listarlas.")
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT c.id, c.nombre, c.tipo, c.saldo_inicial
+             + COALESCE((SELECT SUM(i.monto) FROM ingresos i WHERE i.cuenta_id = c.id), 0)
+             - COALESCE((SELECT SUM(g.monto) FROM gastos g WHERE g.cuenta_id = c.id), 0)
+             + COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_destino = c.id), 0)
+             - COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_origen = c.id), 0)
+        FROM cuentas c ORDER BY c.nombre
+    """)
+    cuentas = cursor.fetchall()
+    conn.close()
+
+    if not cuentas:
+        bot.reply_to(message, "No tienes cuentas aún. Créalas en la app: Tesorería → ⚙ Administrar.")
+        return
+
+    default = cuenta_por_defecto()
+    lineas = ["💳 *Tus cuentas:*", ""]
+    for cid, nombre, tipo, saldo in cuentas:
+        marca = " ⭐ (default)" if default and cid == default[0] else ""
+        lineas.append(f"• {nombre} ({tipo}): ${saldo:,.2f}{marca}")
+    lineas += ["", "Fijar default: `/cuenta nombre`", "Por gasto: agrega `@nombre` al mensaje"]
+    bot.reply_to(message, "\n".join(lineas), parse_mode="Markdown")
+
+
 # Procesador de Mensajes de Texto con Ingeniería de Flags Fiscales (SAT)
 @bot.message_handler(func=lambda message: True)
 def procesar_gasto(message):
     texto = message.text.strip()
-    
+
+    # 0. Cuenta destino: @nombre en el mensaje > cuenta por defecto > sin cuenta
+    cuenta_sel = None
+    aviso_cuenta = ""
+    m_cuenta = re.search(r"@(\S+)", texto)
+    if m_cuenta:
+        cuenta_sel = resolver_cuenta(m_cuenta.group(1))
+        if not cuenta_sel:
+            aviso_cuenta = f"\n⚠️ No encontré la cuenta '@{m_cuenta.group(1)}'"
+        texto = re.sub(r"@\S+", "", texto).strip()
+    if not cuenta_sel:
+        cuenta_sel = cuenta_por_defecto()
+
     # 1. Extraer flags al final del mensaje (+f = con factura, +d = deducible)
     con_factura = 1 if "+f" in texto.lower() else 0
     es_deducible = 1 if "+d" in texto.lower() else 0
-    
+
     # Limpiar el texto de los flags para no ensuciar la descripción
     texto_limpio = texto.replace("+f", "").replace("+F", "").replace("+d", "").replace("+D", "").strip()
     
@@ -252,9 +333,10 @@ def procesar_gasto(message):
         fecha_envio = datetime.fromtimestamp(message.date).strftime("%Y-%m-%d")
 
         cursor.execute("""
-            INSERT INTO gastos (desc, monto, categoria, fecha, con_factura, es_deducible)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (desc.strip(), monto, categoria_real, fecha_envio, con_factura, es_deducible))
+            INSERT INTO gastos (desc, monto, categoria, fecha, con_factura, es_deducible, cuenta_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (desc.strip(), monto, categoria_real, fecha_envio, con_factura, es_deducible,
+              cuenta_sel[0] if cuenta_sel else None))
         
         conn.commit()
         conn.close()
@@ -265,6 +347,10 @@ def procesar_gasto(message):
         if es_deducible: status_fiscal += "[Deducible Art. 151]"
 
         respuesta = f"✅ **Registrado:**\n `${monto:,.2f}` en *{categoria_real}*\n `{desc.strip()}`\n⚖️ *Status:* {status_fiscal if status_fiscal else 'Gasto Corriente'}"
+
+        if cuenta_sel:
+            respuesta += f"\n💳 Cuenta: {cuenta_sel[1]}"
+        respuesta += aviso_cuenta
 
         # Retroalimentación de presupuesto en el momento de la captura
         presupuesto = linea_presupuesto(categoria_real)

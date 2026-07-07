@@ -113,6 +113,19 @@ def init_db():
         )
     """)
 
+    # Transferencias entre cuentas (p.ej. pago de tarjeta de crédito):
+    # mueven saldo sin ser ingreso ni gasto — no tocan los flujos de Tesorería
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS transferencias (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cuenta_origen INTEGER,
+            cuenta_destino INTEGER,
+            monto REAL,
+            fecha TEXT,
+            descripcion TEXT
+        )
+    """)
+
     # Migración: clasificación SAT del gasto deducible (Art. 151 LISR / decreto colegiaturas)
     cursor.execute("PRAGMA table_info(gastos)")
     columnas_gastos = [c[1] for c in cursor.fetchall()]

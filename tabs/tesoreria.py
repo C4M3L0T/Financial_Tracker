@@ -3,7 +3,7 @@ import sqlite3
 from datetime import datetime
 from tkinter import messagebox
 
-CATEGORIAS_GASTOS = ["Vivienda", "Comida", "Transporte", "Impuestos", "Ahorros", "Salud", "Recreación", "Suscripciones", "Seguros","Servicios", "Vestimenta", "Personal", "Mascota", "Deuda", "Otros"]
+CATEGORIAS_GASTOS = ["Vivienda", "Comida", "Transporte", "Impuestos", "Ahorros", "Salud", "Deportes", "Recreación", "Suscripciones", "Seguros","Servicios", "Vestimenta", "Personal", "Mascota", "Deuda", "Otros"]
 FUENTES_INGRESO = ["Salario", "Freelance", "Rendimientos", "Ventas", "Otros"]
 
 # Clasificación SAT del gasto deducible. Los nombres deben coincidir con los
@@ -243,13 +243,15 @@ class TesoreriaTab(ctk.CTkFrame):
     # CUENTAS: SALDOS CALCULADOS Y ADMINISTRACIÓN
     # =========================================================
     def obtener_cuentas_con_saldo(self):
-        """Saldo real = saldo inicial + Σ ingresos − Σ gastos asignados a la cuenta."""
+        """Saldo real = inicial + Σingresos − Σgastos + Σtransferencias recibidas − Σenviadas."""
         conn = sqlite3.connect("data.db")
         cursor = conn.cursor()
         cursor.execute("""
             SELECT c.id, c.nombre, c.tipo, c.saldo_inicial
                  + COALESCE((SELECT SUM(i.monto) FROM ingresos i WHERE i.cuenta_id = c.id), 0)
                  - COALESCE((SELECT SUM(g.monto) FROM gastos g WHERE g.cuenta_id = c.id), 0)
+                 + COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_destino = c.id), 0)
+                 - COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_origen = c.id), 0)
             FROM cuentas c ORDER BY c.nombre
         """)
         filas = cursor.fetchall()
@@ -278,7 +280,9 @@ class TesoreriaTab(ctk.CTkFrame):
                          text_color=color).pack(padx=10, pady=(0, 4))
 
         ctk.CTkButton(self.frame_cuentas, text="⚙ Administrar", width=110, fg_color="#334155",
-                      hover_color="#475569", command=self.abrir_admin_cuentas).pack(side="right", padx=15, pady=8)
+                      hover_color="#475569", command=self.abrir_admin_cuentas).pack(side="right", padx=(5, 15), pady=8)
+        ctk.CTkButton(self.frame_cuentas, text="⇄ Pagar tarjeta / Transferir", width=170, fg_color="#3B82F6",
+                      hover_color="#2563EB", command=self.abrir_transferencia).pack(side="right", padx=5, pady=8)
 
         # Refrescar selectores de cuenta en ambos formularios
         opciones = [SIN_CUENTA] + list(self.cuentas_map.keys())
@@ -287,6 +291,103 @@ class TesoreriaTab(ctk.CTkFrame):
             menu.configure(values=opciones)
             if actual not in opciones:
                 menu.set(SIN_CUENTA)
+
+    def abrir_transferencia(self):
+        """Pago de tarjeta o movimiento entre cuentas propias: ajusta saldos
+        sin registrar ingreso ni gasto (el gasto real ocurrió en la compra)."""
+        cuentas = self.obtener_cuentas_con_saldo()
+        if len(cuentas) < 2:
+            messagebox.showinfo("Faltan Cuentas", "Necesitas al menos dos cuentas para transferir.\nCréalas con ⚙ Administrar.")
+            return
+
+        nombres = [f"{nombre} (${saldo:,.2f})" for _, nombre, _, saldo in cuentas]
+        ids_por_nombre = {n: cuentas[i][0] for i, n in enumerate(nombres)}
+        credito_idx = next((i for i, c in enumerate(cuentas) if c[2] == "Crédito"), None)
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Pagar Tarjeta / Transferir")
+        dialog.geometry("400x420")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        ctk.CTkLabel(dialog, text="Cuenta de ORIGEN (de dónde sale el dinero):",
+                     font=("Urbanist", 11), text_color="#94A3B8").pack(pady=(15, 2), padx=20, anchor="w")
+        c_origen = ctk.CTkOptionMenu(dialog, values=nombres)
+        c_origen.pack(pady=2, padx=20, fill="x")
+
+        ctk.CTkLabel(dialog, text="Cuenta de DESTINO (tarjeta a pagar u otra cuenta):",
+                     font=("Urbanist", 11), text_color="#94A3B8").pack(pady=(10, 2), padx=20, anchor="w")
+        c_destino = ctk.CTkOptionMenu(dialog, values=nombres)
+        if credito_idx is not None:
+            c_destino.set(nombres[credito_idx])
+        c_destino.pack(pady=2, padx=20, fill="x")
+
+        e_monto = ctk.CTkEntry(dialog, placeholder_text="Monto ($)")
+        e_monto.pack(pady=(10, 2), padx=20, fill="x")
+        e_desc = ctk.CTkEntry(dialog, placeholder_text="Descripción (ej: Pago tarjeta julio)")
+        e_desc.pack(pady=2, padx=20, fill="x")
+
+        def transferir():
+            origen, destino = c_origen.get(), c_destino.get()
+            if origen == destino:
+                messagebox.showerror("Error", "Origen y destino deben ser cuentas distintas.", parent=dialog)
+                return
+            try:
+                monto = float(e_monto.get().strip())
+                if monto <= 0: raise ValueError
+            except ValueError:
+                messagebox.showerror("Error", "El monto debe ser un número mayor a cero.", parent=dialog)
+                return
+
+            conn = sqlite3.connect("data.db")
+            conn.cursor().execute(
+                "INSERT INTO transferencias (cuenta_origen, cuenta_destino, monto, fecha, descripcion) VALUES (?,?,?,?,?)",
+                (ids_por_nombre[origen], ids_por_nombre[destino], monto,
+                 datetime.now().strftime("%Y-%m-%d"), e_desc.get().strip() or "Transferencia"))
+            conn.commit()
+            conn.close()
+            dialog.destroy()
+            self.actualizar_cuentas()
+
+        ctk.CTkButton(dialog, text="Ejecutar Transferencia", fg_color="#3B82F6", hover_color="#2563EB",
+                      command=transferir).pack(pady=12, padx=20, fill="x")
+
+        # Últimas transferencias, con opción de deshacer
+        ctk.CTkLabel(dialog, text="Últimas transferencias:", font=("Urbanist", 11),
+                     text_color="#94A3B8").pack(pady=(5, 2), padx=20, anchor="w")
+        lista_tr = ctk.CTkScrollableFrame(dialog, height=110)
+        lista_tr.pack(fill="both", expand=True, padx=20, pady=(0, 15))
+
+        def refrescar_transferencias():
+            for w in lista_tr.winfo_children(): w.destroy()
+            conn = sqlite3.connect("data.db")
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT t.id, co.nombre, cd.nombre, t.monto, t.fecha
+                FROM transferencias t
+                LEFT JOIN cuentas co ON co.id = t.cuenta_origen
+                LEFT JOIN cuentas cd ON cd.id = t.cuenta_destino
+                ORDER BY t.id DESC LIMIT 5
+            """)
+            filas = cursor.fetchall()
+            conn.close()
+            for tid, org, dst, monto, fecha in filas:
+                row = ctk.CTkFrame(lista_tr, fg_color="transparent")
+                row.pack(fill="x", pady=1)
+                ctk.CTkLabel(row, text=f"{fecha}: {org or '?'} → {dst or '?'} ${monto:,.2f}",
+                             font=("Urbanist", 11)).pack(side="left", padx=2)
+                ctk.CTkButton(row, text="🗑", width=26, fg_color="#EF4444", hover_color="#DC2626",
+                              command=lambda i=tid: borrar_transferencia(i)).pack(side="right")
+
+        def borrar_transferencia(tid):
+            conn = sqlite3.connect("data.db")
+            conn.cursor().execute("DELETE FROM transferencias WHERE id=?", (tid,))
+            conn.commit()
+            conn.close()
+            refrescar_transferencias()
+            self.actualizar_cuentas()
+
+        refrescar_transferencias()
 
     def abrir_admin_cuentas(self):
         dialog = ctk.CTkToplevel(self)

@@ -114,7 +114,8 @@ A continuación se detalla la fundamentación matemática, contable y microecon�
 
 ### Cuentas con saldo real
 
-- Alta de cuentas (Efectivo/Débito/Crédito/Inversión) con saldo inicial; cada ingreso/gasto puede asignarse a una cuenta y el saldo actual se **deriva** de los movimientos (saldo inicial + entradas − salidas).
+- Alta de cuentas (Efectivo/Débito/Crédito/Inversión) con saldo inicial; cada ingreso/gasto puede asignarse a una cuenta y el saldo actual se **deriva** de los movimientos (saldo inicial + entradas − salidas ± transferencias). En tarjetas de crédito, la deuda se captura como saldo negativo.
+- **Pagos de tarjeta y transferencias** (botón "⇄ Pagar tarjeta / Transferir" en Tesorería): mueven saldo entre cuentas sin registrar ingreso ni gasto — el gasto real se contabilizó al comprar. La conciliación de la Auditoría los entiende: restan del flujo esperado sin marcar descuadre.
 - La Auditoría Patrimonial gana la sección [4]: contrasta la liquidez según tus cuentas contra los activos líquidos declarados en el Balance General.
 
 ### Bot de Telegram con alertas
@@ -122,6 +123,7 @@ A continuación se detalla la fundamentación matemática, contable y microecon�
 - Cada gasto capturado responde con el estado del presupuesto de su categoría (✅/⚠️/🚨).
 - Comando `/resumen`: semáforo de todos los presupuestos + deudas activas.
 - **Vigilante diario**: una vez al día (después de las 9:00) el bot te avisa proactivamente de presupuestos al ≥90% y deudas por liquidar, sin duplicados aunque el servicio se reinicie.
+- **Cuentas desde el bot**: `/cuenta` lista tus cuentas con saldo, `/cuenta nombre` fija la cuenta por defecto para todos los gastos, y `@nombre` al final de un mensaje asigna ese gasto a otra cuenta (ej. `450 c Tacos @nu`).
 
 ---
 
