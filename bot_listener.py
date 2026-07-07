@@ -1,6 +1,7 @@
 import sqlite3
 import telebot
 import config
+import database
 import threading
 import time
 import re
@@ -142,12 +143,18 @@ def construir_alertas():
 # CUENTAS: RESOLUCIÓN Y CUENTA POR DEFECTO
 # =========================================================
 def resolver_cuenta(texto_busqueda):
-    """Devuelve (id, nombre) de la primera cuenta cuyo nombre contenga el texto, o None."""
+    """Devuelve (id, nombre) de la cuenta que mejor coincida, o None.
+    Prioridad: nombre exacto > prefijo > subcadena — así 'nu' resuelve a
+    'Nu' y no a 'Cajitas Nu' por orden alfabético."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, nombre FROM cuentas WHERE LOWER(nombre) LIKE ? ORDER BY nombre",
-                   (f"%{texto_busqueda.lower()}%",))
-    row = cursor.fetchone()
+    texto = texto_busqueda.lower()
+    row = None
+    for patron in (texto, f"{texto}%", f"%{texto}%"):
+        cursor.execute("SELECT id, nombre FROM cuentas WHERE LOWER(nombre) LIKE ? ORDER BY nombre", (patron,))
+        row = cursor.fetchone()
+        if row:
+            break
     conn.close()
     return row
 
@@ -180,10 +187,20 @@ def guardar_estado(clave, valor):
     conn.close()
 
 def vigilante_diario():
-    """Una revisión al día (después de las 9:00). La marca en bot_estado evita
-    duplicados aunque systemd reinicie el proceso varias veces al día."""
+    """Cada hora: respaldo diario de la BD y materialización de recurrentes
+    (con aviso inmediato de lo generado). Además, una vez al día (después de
+    las 9:00) manda las alertas; la marca en bot_estado evita duplicados
+    aunque systemd reinicie el proceso varias veces al día."""
     while True:
         try:
+            database.respaldar_db()
+
+            generados = database.generar_recurrentes()
+            if generados:
+                bot.send_message(MI_TELEGRAM_ID,
+                                 "🔁 *Recurrentes registrados:*\n" + "\n".join(generados),
+                                 parse_mode="Markdown")
+
             hoy = datetime.now().strftime("%Y-%m-%d")
             if datetime.now().hour >= 9 and obtener_estado("ultimo_aviso") != hoy:
                 alertas = construir_alertas()
@@ -229,7 +246,8 @@ def enviar_bienvenida(message):
         " `o`  = Otros\n\n"
         " 💳 **Cuentas:** agrega `@nombre` al final para asignar cuenta\n"
         " *Ejemplo:* `450 c Tacos @nu`\n"
-        " `/cuenta nombre` fija tu cuenta por defecto | `/cuenta` las lista\n\n"
+        " `/cuenta nombre` fija tu cuenta por defecto | `/cuenta` las lista\n"
+        " `/pago monto origen destino` paga tarjeta o transfiere entre cuentas\n\n"
         " Envía /resumen para ver el semáforo de presupuestos y tus deudas."
     )
     bot.reply_to(message, ayuda, parse_mode="Markdown")
@@ -254,18 +272,8 @@ def gestionar_cuenta(message):
             bot.reply_to(message, f"❌ Ninguna cuenta contiene '{partes[1].strip()}'. Envía /cuenta para listarlas.")
         return
 
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT c.id, c.nombre, c.tipo, c.saldo_inicial
-             + COALESCE((SELECT SUM(i.monto) FROM ingresos i WHERE i.cuenta_id = c.id), 0)
-             - COALESCE((SELECT SUM(g.monto) FROM gastos g WHERE g.cuenta_id = c.id), 0)
-             + COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_destino = c.id), 0)
-             - COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_origen = c.id), 0)
-        FROM cuentas c ORDER BY c.nombre
-    """)
-    cuentas = cursor.fetchall()
-    conn.close()
+    cuentas = [(cid, nombre, tipo, saldo)
+               for cid, nombre, tipo, _tasa, saldo in database.obtener_saldos_cuentas()]
 
     if not cuentas:
         bot.reply_to(message, "No tienes cuentas aún. Créalas en la app: Tesorería → ⚙ Administrar.")
@@ -278,6 +286,48 @@ def gestionar_cuenta(message):
         lineas.append(f"• {nombre} ({tipo}): ${saldo:,.2f}{marca}")
     lineas += ["", "Fijar default: `/cuenta nombre`", "Por gasto: agrega `@nombre` al mensaje"]
     bot.reply_to(message, "\n".join(lineas), parse_mode="Markdown")
+
+
+# Pago de tarjeta / transferencia entre cuentas propias desde el celular
+# (ni ingreso ni gasto: solo mueve saldo — registrado ANTES del catch-all)
+@bot.message_handler(commands=['pago', 'transferir'])
+def transferir_bot(message):
+    partes = message.text.split()
+    if len(partes) != 4:
+        bot.reply_to(message,
+                     "Formato: `/pago monto origen destino`\n*Ejemplo:* `/pago 2000 bbva nu`\nEnvía /cuenta para ver tus cuentas.",
+                     parse_mode="Markdown")
+        return
+    try:
+        monto = float(partes[1])
+        if monto <= 0: raise ValueError
+    except ValueError:
+        bot.reply_to(message, "❌ El monto debe ser un número positivo.")
+        return
+
+    origen = resolver_cuenta(partes[2])
+    destino = resolver_cuenta(partes[3])
+    if not origen or not destino:
+        faltante = partes[2] if not origen else partes[3]
+        bot.reply_to(message, f"❌ No encontré la cuenta '{faltante}'. Envía /cuenta para listarlas.")
+        return
+    if origen[0] == destino[0]:
+        bot.reply_to(message, "❌ Origen y destino deben ser cuentas distintas.")
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.cursor().execute(
+        "INSERT INTO transferencias (cuenta_origen, cuenta_destino, monto, fecha, descripcion) VALUES (?,?,?,?,?)",
+        (origen[0], destino[0], monto, datetime.now().strftime("%Y-%m-%d"), "Pago desde Telegram"))
+    conn.commit()
+    conn.close()
+
+    saldos = {cid: saldo for cid, _n, _t, _ta, saldo in database.obtener_saldos_cuentas()}
+    bot.reply_to(message,
+                 f"✅ *Transferencia registrada:* ${monto:,.2f}\n{origen[1]} → {destino[1]}\n\n"
+                 f"💳 {origen[1]}: ${saldos.get(origen[0], 0):,.2f}\n"
+                 f"💳 {destino[1]}: ${saldos.get(destino[0], 0):,.2f}",
+                 parse_mode="Markdown")
 
 
 # Procesador de Mensajes de Texto con Ingeniería de Flags Fiscales (SAT)

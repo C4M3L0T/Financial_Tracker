@@ -13,3 +13,9 @@ __pycache__/
 
 # Entornos virtuales
 venv/
+
+# Respaldos automáticos de la base de datos (datos reales)
+backups/
+
+# Exportes CSV (datos reales)
+exportes/

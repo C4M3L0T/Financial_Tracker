@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from datetime import datetime
+from database import CATEGORIA_AHORRO
 
 # UMA diaria vigente — actualizar cada enero con el valor oficial del INEGI
 UMA_DIARIA = 117.31
@@ -321,9 +322,10 @@ class ImpuestosInversionTab(ctk.CTkFrame):
         # toma una fecha arbitraria de cada grupo y puede traer meses equivocados
         cursor.execute("""
             SELECT strftime('%Y-%m', fecha) AS periodo, SUM(monto) FROM gastos
+            WHERE categoria != ?
             GROUP BY periodo
             ORDER BY periodo DESC LIMIT 6
-        """)
+        """, (CATEGORIA_AHORRO,))
         gastos_mensuales = [row[1] for row in cursor.fetchall()]
         conn.close()
         

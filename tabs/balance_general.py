@@ -38,9 +38,14 @@ class BalanceGeneralTab(ctk.CTkFrame):
         
         self.e_pas_corto = self.crear_input(self.frame_inputs, "Corto Plazo (Saldo total Tarjetas de Crédito):")
         self.e_pas_largo = self.crear_input(self.frame_inputs, "Largo Plazo (Crédito Hipotecario / Automotriz):")
-        
+
+        # La app ya conoce líquidos y deuda de tarjetas: evitar el error de dedo
+        ctk.CTkButton(self.frame_inputs, text="📥 Usar saldos de mis cuentas", fg_color="#334155",
+                      hover_color="#475569", font=("Urbanist", 11),
+                      command=self.usar_saldos_cuentas).pack(pady=(15, 5), padx=20, fill="x")
+
         # Botón de Guardar Cierre de Mes
-        ctk.CTkButton(self.frame_inputs, text="Cerrar Balance del Mes", fg_color="#3B82F6", hover_color="#2563EB", font=("Urbanist", 12, "bold"), command=self.guardar_balance).pack(pady=20, padx=20, fill="x")
+        ctk.CTkButton(self.frame_inputs, text="Cerrar Balance del Mes", fg_color="#3B82F6", hover_color="#2563EB", font=("Urbanist", 12, "bold"), command=self.guardar_balance).pack(pady=(5, 20), padx=20, fill="x")
 
         # =========================================================
         # PANEL DERECHO: PATRIMONIO NETO Y ESCUDO INFLACIONARIO CETES
@@ -78,6 +83,24 @@ class BalanceGeneralTab(ctk.CTkFrame):
         lbl_val = ctk.CTkLabel(frame, text=valor_defecto, font=("Urbanist", 16, "bold"), text_color=color_valor)
         lbl_val.pack(pady=(0, 5), padx=10, anchor="w")
         return lbl_val
+
+    def usar_saldos_cuentas(self):
+        """Prellena activos líquidos y deuda de tarjetas desde los saldos derivados
+        de las cuentas — la conciliación cuadra por construcción."""
+        import database
+        from tkinter import messagebox
+        filas = database.obtener_saldos_cuentas()
+        if not filas:
+            messagebox.showinfo("Sin Cuentas", "Crea tus cuentas en Tesorería (⚙ Administrar) primero.")
+            return
+        liquido = sum(s for _c, _n, tipo, _t, s in filas if tipo != "Crédito")
+        deuda_tarjetas = -sum(s for _c, _n, tipo, _t, s in filas if tipo == "Crédito" and s < 0)
+
+        self.e_act_liquidos.delete(0, 'end')
+        self.e_act_liquidos.insert(0, f"{liquido:.2f}")
+        self.e_pas_corto.delete(0, 'end')
+        self.e_pas_corto.insert(0, f"{deuda_tarjetas:.2f}")
+        self.recalcular_patrimonio()
 
     def cargar_mes_actual(self):
         """Lee el registro del mes en curso si ya existe"""

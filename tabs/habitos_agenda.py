@@ -574,6 +574,8 @@ class HabitosAgendaTab(ctk.CTkFrame):
         self.abrir_dialogo_input("Editar Ejercicio", [("nombre", "Nombre del ejercicio:", nombre_actual)], guardar)
 
     def eliminar_ejercicio(self, ejercicio_id):
+        if not messagebox.askyesno("Confirmar", "¿Eliminar este ejercicio y todo su historial?"):
+            return
         conn = sqlite3.connect("data.db")
         cursor = conn.cursor()
         cursor.execute("DELETE FROM entrenamiento_ejercicios WHERE id=?", (ejercicio_id,))
@@ -665,6 +667,8 @@ class HabitosAgendaTab(ctk.CTkFrame):
                       command=guardar).pack(pady=15, padx=20, fill="x")
 
     def eliminar_sesion_natacion(self, sesion_id):
+        if not messagebox.askyesno("Confirmar", "¿Eliminar esta sesión de natación?"):
+            return
         conn = sqlite3.connect("data.db")
         conn.cursor().execute("DELETE FROM natacion_log WHERE id=?", (sesion_id,))
         conn.commit()
@@ -737,6 +741,8 @@ class HabitosAgendaTab(ctk.CTkFrame):
         dialog.geometry("360x320")
 
     def eliminar_habito_custom(self, habito_id):
+        if not messagebox.askyesno("Confirmar", "¿Eliminar este hábito y todo su historial?"):
+            return
         conn = sqlite3.connect("data.db")
         cursor = conn.cursor()
         cursor.execute("DELETE FROM habitos_custom WHERE id=?", (habito_id,))
@@ -791,6 +797,8 @@ class HabitosAgendaTab(ctk.CTkFrame):
         conn.close()
 
     def eliminar_tarea(self, tarea_id):
+        if not messagebox.askyesno("Confirmar", "¿Eliminar esta tarea?"):
+            return
         conn = sqlite3.connect("data.db")
         conn.cursor().execute("DELETE FROM tareas WHERE id=?", (tarea_id,))
         conn.commit()
@@ -828,6 +836,8 @@ class HabitosAgendaTab(ctk.CTkFrame):
                                                     ("hora", "Hora:", hora_actual)], guardar)
 
     def eliminar_evento(self, evento_id):
+        if not messagebox.askyesno("Confirmar", "¿Eliminar este evento?"):
+            return
         conn = sqlite3.connect("data.db")
         conn.cursor().execute("DELETE FROM agenda WHERE id=?", (evento_id,))
         conn.commit()

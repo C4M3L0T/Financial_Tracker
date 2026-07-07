@@ -41,8 +41,12 @@ class TesoreriaTab(ctk.CTkFrame):
 
         self.e_gdesc = ctk.CTkEntry(panel_gastos, placeholder_text="Descripción (ej: Compra de café)")
         self.e_gdesc.pack(pady=5, padx=20, fill="x")
-        self.e_gmonto = ctk.CTkEntry(panel_gastos, placeholder_text="Monto Numérico ($ MXN)")
-        self.e_gmonto.pack(pady=5, padx=20, fill="x")
+        fila_monto_g = ctk.CTkFrame(panel_gastos, fg_color="transparent")
+        fila_monto_g.pack(fill="x", padx=20, pady=5)
+        self.e_gmonto = ctk.CTkEntry(fila_monto_g, placeholder_text="Monto Numérico ($ MXN)")
+        self.e_gmonto.pack(side="left", expand=True, fill="x", padx=(0, 5))
+        self.e_gfecha = ctk.CTkEntry(fila_monto_g, placeholder_text="Fecha (vacío = hoy)", width=150)
+        self.e_gfecha.pack(side="left")
         # Categoría y cuenta lado a lado (formulario compacto: el historial necesita el espacio)
         fila_cat = ctk.CTkFrame(panel_gastos, fg_color="transparent")
         fila_cat.pack(fill="x", padx=20, pady=4)
@@ -73,9 +77,13 @@ class TesoreriaTab(ctk.CTkFrame):
         self.c_tipo_deduccion.pack(side="left", expand=True, fill="x")
 
         ctk.CTkButton(panel_gastos, text="Registrar Salida Financiera", fg_color="#EF4444", hover_color="#DC2626", command=self.guardar_gasto).pack(pady=8, padx=20, fill="x")
-        
+
+        self.e_buscar_g = ctk.CTkEntry(panel_gastos, placeholder_text="🔍 Buscar gasto (descripción o categoría)...", height=30)
+        self.e_buscar_g.pack(pady=(0, 2), padx=10, fill="x")
+        self.e_buscar_g.bind("<KeyRelease>", lambda e: self.actualizar_historiales())
+
         self.frame_historial_gastos = ctk.CTkScrollableFrame(panel_gastos, height=250)
-        self.frame_historial_gastos.pack(pady=10, fill="both", expand=True, padx=10)
+        self.frame_historial_gastos.pack(pady=(2, 10), fill="both", expand=True, padx=10)
 
         # --- PANEL DERECHO: INGRESOS ---
         panel_ingresos = ctk.CTkFrame(self)
@@ -84,8 +92,12 @@ class TesoreriaTab(ctk.CTkFrame):
 
         self.e_idesc = ctk.CTkEntry(panel_ingresos, placeholder_text="Origen (ej: Pago de Cliente)")
         self.e_idesc.pack(pady=5, padx=20, fill="x")
-        self.e_imonto = ctk.CTkEntry(panel_ingresos, placeholder_text="Monto Numérico ($ MXN)")
-        self.e_imonto.pack(pady=5, padx=20, fill="x")
+        fila_monto_i = ctk.CTkFrame(panel_ingresos, fg_color="transparent")
+        fila_monto_i.pack(fill="x", padx=20, pady=5)
+        self.e_imonto = ctk.CTkEntry(fila_monto_i, placeholder_text="Monto Numérico ($ MXN)")
+        self.e_imonto.pack(side="left", expand=True, fill="x", padx=(0, 5))
+        self.e_ifecha = ctk.CTkEntry(fila_monto_i, placeholder_text="Fecha (vacío = hoy)", width=150)
+        self.e_ifecha.pack(side="left")
         fila_fuente = ctk.CTkFrame(panel_ingresos, fg_color="transparent")
         fila_fuente.pack(fill="x", padx=20, pady=4)
         col_fue = ctk.CTkFrame(fila_fuente, fg_color="transparent")
@@ -100,9 +112,27 @@ class TesoreriaTab(ctk.CTkFrame):
         self.c_icuenta.pack(fill="x")
 
         ctk.CTkButton(panel_ingresos, text="Registrar Entrada Liquidez", fg_color="#10B981", hover_color="#059669", command=self.guardar_ingreso).pack(pady=8, padx=20, fill="x")
-        
+
+        self.e_buscar_i = ctk.CTkEntry(panel_ingresos, placeholder_text="🔍 Buscar ingreso (descripción o fuente)...", height=30)
+        self.e_buscar_i.pack(pady=(0, 2), padx=10, fill="x")
+        self.e_buscar_i.bind("<KeyRelease>", lambda e: self.actualizar_historiales())
+
         self.frame_historial_ingresos = ctk.CTkScrollableFrame(panel_ingresos, height=250)
-        self.frame_historial_ingresos.pack(pady=10, fill="both", expand=True, padx=10)
+        self.frame_historial_ingresos.pack(pady=(2, 10), fill="both", expand=True, padx=10)
+
+    def resolver_fecha(self, entry_fecha):
+        """Fecha opcional de captura: vacío = hoy; devuelve None si es inválida
+        (para capturar con retraso sin el doble paso de corregir con 📅)."""
+        texto = entry_fecha.get().strip()
+        if not texto:
+            return datetime.now().strftime("%Y-%m-%d")
+        try:
+            datetime.strptime(texto, "%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Fecha Inválida", f"'{texto}' no es válida. Usa YYYY-MM-DD o déjala vacía para hoy.")
+            return None
+        entry_fecha.delete(0, 'end')
+        return texto
 
     def guardar_gasto(self):
         desc = self.e_gdesc.get().strip()
@@ -122,7 +152,9 @@ class TesoreriaTab(ctk.CTkFrame):
             messagebox.showerror("Error de Tipo de Dato", f"El valor '{monto_raw}' no es un número válido.\\nRevisa si invertiste los campos.")
             return
 
-        fecha = datetime.now().strftime("%Y-%m-%d")
+        fecha = self.resolver_fecha(self.e_gfecha)
+        if fecha is None:
+            return
         tipo_deduccion = self.c_tipo_deduccion.get() if self.var_deducible.get() == 1 else None
         cuenta_id = self.cuentas_map.get(self.c_gcuenta.get())
         conn = sqlite3.connect("data.db")
@@ -182,7 +214,9 @@ class TesoreriaTab(ctk.CTkFrame):
             messagebox.showerror("Error de Tipo de Dato", f"El valor '{monto_raw}' no es un número contable válido.\\nVerifica tus datos.")
             return
 
-        fecha = datetime.now().strftime("%Y-%m-%d")
+        fecha = self.resolver_fecha(self.e_ifecha)
+        if fecha is None:
+            return
         cuenta_id = self.cuentas_map.get(self.c_icuenta.get())
         conn = sqlite3.connect("data.db")
         conn.cursor().execute(
@@ -197,6 +231,8 @@ class TesoreriaTab(ctk.CTkFrame):
         self.actualizar()
 
     def eliminar_gasto(self, gid):
+        if not messagebox.askyesno("Confirmar", "¿Eliminar este gasto?"):
+            return
         conn = sqlite3.connect("data.db")
         conn.cursor().execute("DELETE FROM gastos WHERE id=?", (gid,))
         conn.commit()
@@ -204,6 +240,8 @@ class TesoreriaTab(ctk.CTkFrame):
         self.actualizar()
 
     def eliminar_ingreso(self, iid):
+        if not messagebox.askyesno("Confirmar", "¿Eliminar este ingreso?"):
+            return
         conn = sqlite3.connect("data.db")
         conn.cursor().execute("DELETE FROM ingresos WHERE id=?", (iid,))
         conn.commit()
@@ -243,20 +281,10 @@ class TesoreriaTab(ctk.CTkFrame):
     # CUENTAS: SALDOS CALCULADOS Y ADMINISTRACIÓN
     # =========================================================
     def obtener_cuentas_con_saldo(self):
-        """Saldo real = inicial + Σingresos − Σgastos + Σtransferencias recibidas − Σenviadas."""
-        conn = sqlite3.connect("data.db")
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT c.id, c.nombre, c.tipo, c.saldo_inicial
-                 + COALESCE((SELECT SUM(i.monto) FROM ingresos i WHERE i.cuenta_id = c.id), 0)
-                 - COALESCE((SELECT SUM(g.monto) FROM gastos g WHERE g.cuenta_id = c.id), 0)
-                 + COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_destino = c.id), 0)
-                 - COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_origen = c.id), 0)
-            FROM cuentas c ORDER BY c.nombre
-        """)
-        filas = cursor.fetchall()
-        conn.close()
-        return filas
+        """Delegado a database.obtener_saldos_cuentas() (fuente única de saldos)."""
+        import database
+        return [(cid, nombre, tipo, saldo)
+                for cid, nombre, tipo, _tasa, saldo in database.obtener_saldos_cuentas()]
 
     def actualizar_cuentas(self):
         for w in self.frame_cuentas.winfo_children(): w.destroy()
@@ -283,6 +311,10 @@ class TesoreriaTab(ctk.CTkFrame):
                       hover_color="#475569", command=self.abrir_admin_cuentas).pack(side="right", padx=(5, 15), pady=8)
         ctk.CTkButton(self.frame_cuentas, text="⇄ Pagar tarjeta / Transferir", width=170, fg_color="#3B82F6",
                       hover_color="#2563EB", command=self.abrir_transferencia).pack(side="right", padx=5, pady=8)
+        ctk.CTkButton(self.frame_cuentas, text="🔁 Recurrentes", width=120, fg_color="#A855F7",
+                      hover_color="#9333EA", command=self.abrir_recurrentes).pack(side="right", padx=5, pady=8)
+        ctk.CTkButton(self.frame_cuentas, text="⬇ CSV", width=70, fg_color="#10B981",
+                      hover_color="#059669", command=self.exportar_csv).pack(side="right", padx=5, pady=8)
 
         # Refrescar selectores de cuenta en ambos formularios
         opciones = [SIN_CUENTA] + list(self.cuentas_map.keys())
@@ -380,6 +412,8 @@ class TesoreriaTab(ctk.CTkFrame):
                               command=lambda i=tid: borrar_transferencia(i)).pack(side="right")
 
         def borrar_transferencia(tid):
+            if not messagebox.askyesno("Confirmar", "¿Deshacer esta transferencia?", parent=dialog):
+                return
             conn = sqlite3.connect("data.db")
             conn.cursor().execute("DELETE FROM transferencias WHERE id=?", (tid,))
             conn.commit()
@@ -388,6 +422,172 @@ class TesoreriaTab(ctk.CTkFrame):
             self.actualizar_cuentas()
 
         refrescar_transferencias()
+
+    def abrir_recurrentes(self):
+        """Plantillas que se materializan solas cada mes (quincenas, renta,
+        suscripciones): eliminan la captura manual repetitiva."""
+        import database
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Movimientos Recurrentes")
+        dialog.geometry("520x560")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        ctk.CTkLabel(dialog, text="Se generan solos al llegar su día del mes (aunque la app esté cerrada, el bot los registra).",
+                     font=("Urbanist", 11), text_color="#94A3B8", wraplength=470).pack(pady=(12, 4), padx=20, anchor="w")
+
+        # --- Formulario ---
+        fila1 = ctk.CTkFrame(dialog, fg_color="transparent")
+        fila1.pack(fill="x", padx=20, pady=3)
+        var_tipo = ctk.StringVar(value="Gasto")
+        c_categoria = ctk.CTkOptionMenu(fila1, values=CATEGORIAS_GASTOS, width=200)
+
+        def cambiar_tipo(valor):
+            c_categoria.configure(values=FUENTES_INGRESO if valor == "Ingreso" else CATEGORIAS_GASTOS)
+            c_categoria.set(FUENTES_INGRESO[0] if valor == "Ingreso" else CATEGORIAS_GASTOS[0])
+
+        ctk.CTkOptionMenu(fila1, variable=var_tipo, values=["Gasto", "Ingreso"], width=110,
+                          command=cambiar_tipo).pack(side="left", padx=(0, 5))
+        c_categoria.pack(side="left", padx=5)
+
+        e_desc = ctk.CTkEntry(dialog, placeholder_text="Descripción (ej: Renta / Quincena 1)")
+        e_desc.pack(pady=3, padx=20, fill="x")
+
+        fila2 = ctk.CTkFrame(dialog, fg_color="transparent")
+        fila2.pack(fill="x", padx=20, pady=3)
+        e_monto = ctk.CTkEntry(fila2, placeholder_text="Monto $", width=140)
+        e_monto.pack(side="left", padx=(0, 5))
+        e_dia = ctk.CTkEntry(fila2, placeholder_text="Día del mes (1-31)", width=150)
+        e_dia.pack(side="left", padx=5)
+        c_cuenta = ctk.CTkOptionMenu(fila2, values=[SIN_CUENTA] + list(self.cuentas_map.keys()), width=150)
+        c_cuenta.pack(side="left", padx=5)
+
+        lista = ctk.CTkScrollableFrame(dialog, height=230)
+
+        def refrescar_lista():
+            for w in lista.winfo_children(): w.destroy()
+            conn = sqlite3.connect("data.db")
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT r.id, r.tipo, r.descripcion, r.monto, r.categoria, r.dia_mes, r.activo, c.nombre
+                FROM recurrentes r LEFT JOIN cuentas c ON c.id = r.cuenta_id ORDER BY r.dia_mes
+            """)
+            filas = cursor.fetchall()
+            conn.close()
+            if not filas:
+                ctk.CTkLabel(lista, text="Sin recurrentes definidos.", text_color="#64748B").pack(pady=15)
+            for rid, tipo, desc, monto, cat, dia, activo, cta in filas:
+                row = ctk.CTkFrame(lista, fg_color="#1e293b")
+                row.pack(fill="x", pady=2, padx=2)
+                ctk.CTkButton(row, text="🗑", width=28, fg_color="#EF4444", hover_color="#DC2626",
+                              command=lambda i=rid: eliminar(i)).pack(side="right", padx=6, pady=4)
+                ctk.CTkButton(row, text="✏", width=28, fg_color="#3B82F6", hover_color="#2563EB",
+                              command=lambda i=rid: editar(i)).pack(side="right", padx=2)
+                var_act = ctk.IntVar(value=activo)
+                ctk.CTkCheckBox(row, text="", variable=var_act, width=24,
+                                command=lambda i=rid, v=var_act: alternar(i, v)).pack(side="right")
+                icono = "📈" if tipo == "ingreso" else "📉"
+                extra = f" → {cta}" if cta else ""
+                ctk.CTkLabel(row, text=f"{icono} Día {dia}: {desc} ${monto:,.2f} ({cat}){extra}",
+                             font=("Urbanist", 12), anchor="w").pack(side="left", padx=8, pady=6, fill="x", expand=True)
+
+        def crear():
+            desc = e_desc.get().strip()
+            try:
+                monto = float(e_monto.get().strip())
+                dia = int(e_dia.get().strip())
+                if monto <= 0 or not (1 <= dia <= 31): raise ValueError
+            except ValueError:
+                messagebox.showerror("Error", "Monto positivo y día entre 1 y 31.", parent=dialog)
+                return
+            if not desc:
+                messagebox.showerror("Error", "Ponle descripción.", parent=dialog)
+                return
+            tipo = "ingreso" if var_tipo.get() == "Ingreso" else "gasto"
+            cuenta_id = self.cuentas_map.get(c_cuenta.get())
+            conn = sqlite3.connect("data.db")
+            conn.cursor().execute("""
+                INSERT INTO recurrentes (tipo, descripcion, monto, categoria, dia_mes, cuenta_id, activo)
+                VALUES (?,?,?,?,?,?,1)
+            """, (tipo, desc, monto, c_categoria.get(), dia, cuenta_id))
+            conn.commit()
+            conn.close()
+            e_desc.delete(0, 'end'); e_monto.delete(0, 'end'); e_dia.delete(0, 'end')
+            # Materializar de una vez si el día de este mes ya pasó
+            database.generar_recurrentes()
+            refrescar_lista()
+            self.actualizar()
+
+        def editar(rid):
+            conn = sqlite3.connect("data.db")
+            fila = conn.cursor().execute("SELECT descripcion, monto, dia_mes FROM recurrentes WHERE id=?", (rid,)).fetchone()
+            conn.close()
+            if not fila:
+                return
+            d2 = ctk.CTkToplevel(dialog)
+            d2.title("Editar Recurrente")
+            d2.geometry("340x280")
+            d2.transient(dialog)
+            d2.grab_set()
+
+            e_d = ctk.CTkEntry(d2)
+            e_d.insert(0, fila[0])
+            ctk.CTkLabel(d2, text="Descripción:", font=("Urbanist", 11), text_color="#94A3B8").pack(pady=(12, 0), padx=20, anchor="w")
+            e_d.pack(pady=2, padx=20, fill="x")
+            ctk.CTkLabel(d2, text="Monto $:", font=("Urbanist", 11), text_color="#94A3B8").pack(padx=20, anchor="w")
+            e_m = ctk.CTkEntry(d2)
+            e_m.insert(0, f"{fila[1]:g}")
+            e_m.pack(pady=2, padx=20, fill="x")
+            ctk.CTkLabel(d2, text="Día del mes (1-31):", font=("Urbanist", 11), text_color="#94A3B8").pack(padx=20, anchor="w")
+            e_di = ctk.CTkEntry(d2)
+            e_di.insert(0, str(fila[2]))
+            e_di.pack(pady=2, padx=20, fill="x")
+
+            def guardar_edicion():
+                try:
+                    monto_n = float(e_m.get().strip())
+                    dia_n = int(e_di.get().strip())
+                    if monto_n <= 0 or not (1 <= dia_n <= 31): raise ValueError
+                except ValueError:
+                    messagebox.showerror("Error", "Monto positivo y día entre 1 y 31.", parent=d2)
+                    return
+                desc_n = e_d.get().strip()
+                if not desc_n:
+                    messagebox.showerror("Error", "Ponle descripción.", parent=d2)
+                    return
+                conn = sqlite3.connect("data.db")
+                conn.cursor().execute("UPDATE recurrentes SET descripcion=?, monto=?, dia_mes=? WHERE id=?",
+                                      (desc_n, monto_n, dia_n, rid))
+                conn.commit()
+                conn.close()
+                d2.destroy()
+                refrescar_lista()
+
+            ctk.CTkButton(d2, text="Guardar cambios", fg_color="#3B82F6", hover_color="#2563EB",
+                          command=guardar_edicion).pack(pady=14, padx=20, fill="x")
+
+        def eliminar(rid):
+            if not messagebox.askyesno("Confirmar", "¿Eliminar esta plantilla recurrente?\n(Los movimientos ya generados se conservan)", parent=dialog):
+                return
+            conn = sqlite3.connect("data.db")
+            conn.cursor().execute("DELETE FROM recurrentes WHERE id=?", (rid,))
+            conn.commit()
+            conn.close()
+            refrescar_lista()
+
+        def alternar(rid, var):
+            conn = sqlite3.connect("data.db")
+            conn.cursor().execute("UPDATE recurrentes SET activo=? WHERE id=?", (var.get(), rid))
+            conn.commit()
+            conn.close()
+
+        ctk.CTkButton(dialog, text="➕ Crear Recurrente", fg_color="#A855F7", hover_color="#9333EA",
+                      command=crear).pack(pady=8, padx=20, fill="x")
+        ctk.CTkLabel(dialog, text="Activos (✓) / pausados:", font=("Urbanist", 11),
+                     text_color="#94A3B8").pack(pady=(4, 2), padx=20, anchor="w")
+        lista.pack(fill="both", expand=True, padx=20, pady=(0, 15))
+        refrescar_lista()
 
     def abrir_admin_cuentas(self):
         dialog = ctk.CTkToplevel(self)
@@ -407,8 +607,72 @@ class TesoreriaTab(ctk.CTkFrame):
                 ctk.CTkLabel(row, text=f"{nombre} ({tipo}) — ${saldo:,.2f}", font=("Urbanist", 12)).pack(side="left", padx=5)
                 ctk.CTkButton(row, text="🗑", width=28, fg_color="#EF4444", hover_color="#DC2626",
                               command=lambda i=cid: eliminar(i)).pack(side="right", padx=5)
+                ctk.CTkButton(row, text="✏", width=28, fg_color="#3B82F6", hover_color="#2563EB",
+                              command=lambda i=cid: editar(i)).pack(side="right")
+
+        def editar(cuenta_id):
+            conn = sqlite3.connect("data.db")
+            fila = conn.cursor().execute(
+                "SELECT nombre, tipo, saldo_inicial, COALESCE(tasa_anual, 0) FROM cuentas WHERE id=?",
+                (cuenta_id,)).fetchone()
+            conn.close()
+            if not fila:
+                return
+            d2 = ctk.CTkToplevel(dialog)
+            d2.title("Editar Cuenta")
+            d2.geometry("360x360")
+            d2.transient(dialog)
+            d2.grab_set()
+
+            ctk.CTkLabel(d2, text="Nombre:", font=("Urbanist", 11), text_color="#94A3B8").pack(pady=(12, 0), padx=20, anchor="w")
+            e_nom = ctk.CTkEntry(d2)
+            e_nom.insert(0, fila[0])
+            e_nom.pack(pady=2, padx=20, fill="x")
+            c_tip = ctk.CTkOptionMenu(d2, values=TIPOS_CUENTA)
+            c_tip.set(fila[1])
+            c_tip.pack(pady=6, padx=20, fill="x")
+            ctk.CTkLabel(d2, text="Saldo inicial (crédito en negativo):", font=("Urbanist", 11), text_color="#94A3B8").pack(padx=20, anchor="w")
+            e_sal = ctk.CTkEntry(d2)
+            e_sal.insert(0, f"{fila[2]:g}")
+            e_sal.pack(pady=2, padx=20, fill="x")
+            ctk.CTkLabel(d2, text="CAT/tasa anual % (solo crédito):", font=("Urbanist", 11), text_color="#94A3B8").pack(padx=20, anchor="w")
+            e_tas = ctk.CTkEntry(d2)
+            e_tas.insert(0, f"{fila[3]:g}")
+            e_tas.pack(pady=2, padx=20, fill="x")
+
+            def guardar_edicion():
+                nombre_nuevo = e_nom.get().strip()
+                try:
+                    saldo_ini = float(e_sal.get().strip())
+                    tasa = float(e_tas.get().strip() or 0)
+                    if tasa < 0: raise ValueError
+                except ValueError:
+                    messagebox.showerror("Error", "Saldo y tasa deben ser numéricos.", parent=d2)
+                    return
+                if not nombre_nuevo:
+                    messagebox.showerror("Error", "El nombre no puede quedar vacío.", parent=d2)
+                    return
+                conn = sqlite3.connect("data.db")
+                try:
+                    conn.cursor().execute(
+                        "UPDATE cuentas SET nombre=?, tipo=?, saldo_inicial=?, tasa_anual=? WHERE id=?",
+                        (nombre_nuevo, c_tip.get(), saldo_ini, tasa, cuenta_id))
+                    conn.commit()
+                except sqlite3.IntegrityError:
+                    messagebox.showerror("Error", "Ya existe otra cuenta con ese nombre.", parent=d2)
+                    return
+                finally:
+                    conn.close()
+                d2.destroy()
+                refrescar_lista()
+                self.actualizar_cuentas()
+
+            ctk.CTkButton(d2, text="Guardar cambios", fg_color="#3B82F6", hover_color="#2563EB",
+                          command=guardar_edicion).pack(pady=14, padx=20, fill="x")
 
         def eliminar(cuenta_id):
+            if not messagebox.askyesno("Confirmar", "¿Eliminar esta cuenta?\nSus movimientos se conservan pero quedan sin cuenta asignada.", parent=dialog):
+                return
             # Los movimientos históricos se conservan; solo pierden la asignación
             conn = sqlite3.connect("data.db")
             cur = conn.cursor()
@@ -458,15 +722,58 @@ class TesoreriaTab(ctk.CTkFrame):
                       command=crear).pack(pady=12, padx=15, fill="x")
         refrescar_lista()
 
-    def actualizar(self):
-        self.actualizar_cuentas()
+    def exportar_csv(self):
+        """Exporta gastos e ingresos completos (con cuenta) a exportes/ — respaldo
+        legible y análisis externo en Excel/Sheets."""
+        import csv
+        import os
+        os.makedirs("exportes", exist_ok=True)
+        marca = datetime.now().strftime("%Y%m%d_%H%M")
+        ruta_gastos = os.path.join("exportes", f"gastos_{marca}.csv")
+        ruta_ingresos = os.path.join("exportes", f"ingresos_{marca}.csv")
+
+        conn = sqlite3.connect("data.db")
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT g.id, g.fecha, g.desc, g.monto, g.categoria, g.con_factura,
+                   g.es_deducible, COALESCE(g.tipo_deduccion, ''), COALESCE(c.nombre, '')
+            FROM gastos g LEFT JOIN cuentas c ON c.id = g.cuenta_id ORDER BY g.fecha, g.id
+        """)
+        gastos = cursor.fetchall()
+        cursor.execute("""
+            SELECT i.id, i.fecha, i.desc, i.monto, i.fuente, COALESCE(c.nombre, '')
+            FROM ingresos i LEFT JOIN cuentas c ON c.id = i.cuenta_id ORDER BY i.fecha, i.id
+        """)
+        ingresos = cursor.fetchall()
+        conn.close()
+
+        # utf-8-sig: Excel abre los acentos correctamente
+        with open(ruta_gastos, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.writer(f)
+            w.writerow(["id", "fecha", "descripcion", "monto", "categoria", "con_factura", "es_deducible", "tipo_deduccion", "cuenta"])
+            w.writerows(gastos)
+        with open(ruta_ingresos, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.writer(f)
+            w.writerow(["id", "fecha", "descripcion", "monto", "fuente", "cuenta"])
+            w.writerows(ingresos)
+
+        messagebox.showinfo("Exportado",
+                            f"{len(gastos)} gastos → {ruta_gastos}\n{len(ingresos)} ingresos → {ruta_ingresos}")
+
+    def actualizar_historiales(self):
         for w in self.frame_historial_gastos.winfo_children(): w.destroy()
         for w in self.frame_historial_ingresos.winfo_children(): w.destroy()
 
         conn = sqlite3.connect("data.db")
         cursor = conn.cursor()
 
-        cursor.execute("SELECT id, desc, monto, categoria, fecha FROM gastos ORDER BY id DESC LIMIT 20")
+        filtro_g = self.e_buscar_g.get().strip()
+        if filtro_g:
+            like = f"%{filtro_g}%"
+            cursor.execute("""SELECT id, desc, monto, categoria, fecha FROM gastos
+                              WHERE desc LIKE ? OR categoria LIKE ? ORDER BY id DESC LIMIT 30""", (like, like))
+        else:
+            cursor.execute("SELECT id, desc, monto, categoria, fecha FROM gastos ORDER BY id DESC LIMIT 20")
         for gid, d, m, c, fe in cursor.fetchall():
             row = ctk.CTkFrame(self.frame_historial_gastos, fg_color="transparent")
             row.pack(fill="x", pady=2)
@@ -474,7 +781,13 @@ class TesoreriaTab(ctk.CTkFrame):
             ctk.CTkButton(row, text="🗑", width=30, fg_color="#EF4444", command=lambda i=gid: self.eliminar_gasto(i)).pack(side="right")
             ctk.CTkButton(row, text="📅", width=30, fg_color="#3B82F6", hover_color="#2563EB", command=lambda i=gid, fe=fe: self.abrir_editor_fecha("gastos", i, fe)).pack(side="right", padx=3)
 
-        cursor.execute("SELECT id, desc, monto, fuente, fecha FROM ingresos ORDER BY id DESC LIMIT 20")
+        filtro_i = self.e_buscar_i.get().strip()
+        if filtro_i:
+            like = f"%{filtro_i}%"
+            cursor.execute("""SELECT id, desc, monto, fuente, fecha FROM ingresos
+                              WHERE desc LIKE ? OR fuente LIKE ? ORDER BY id DESC LIMIT 30""", (like, like))
+        else:
+            cursor.execute("SELECT id, desc, monto, fuente, fecha FROM ingresos ORDER BY id DESC LIMIT 20")
         for iid, d, m, f, fe in cursor.fetchall():
             row = ctk.CTkFrame(self.frame_historial_ingresos, fg_color="transparent")
             row.pack(fill="x", pady=2)
@@ -483,3 +796,7 @@ class TesoreriaTab(ctk.CTkFrame):
             ctk.CTkButton(row, text="📅", width=30, fg_color="#3B82F6", hover_color="#2563EB", command=lambda i=iid, fe=fe: self.abrir_editor_fecha("ingresos", i, fe)).pack(side="right", padx=3)
 
         conn.close()
+
+    def actualizar(self):
+        self.actualizar_cuentas()
+        self.actualizar_historiales()

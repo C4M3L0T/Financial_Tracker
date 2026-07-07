@@ -1,5 +1,6 @@
 import customtkinter as ctk
 import database
+from tabs.inicio import InicioTab
 from tabs.habitos_agenda import HabitosAgendaTab
 from tabs.tesoreria import TesoreriaTab
 from tabs.planeacion import PlaneacionTab
@@ -16,13 +17,16 @@ class ArchProductivityApp(ctk.CTk):
         self.geometry("1300x900")
         self.minsize(1200, 800)
         
-        # Inicializar capa de datos unificada
+        # Inicializar capa de datos unificada (respaldo diario + migraciones)
         database.init_db()
+        # Materializar quincenas/renta/suscripciones vencidas antes de pintar
+        database.generar_recurrentes()
 
         # Inicialización de la Vista de Pestañas (Tabs)
         self.tabview = ctk.CTkTabview(self)
         self.tabview.pack(padx=20, pady=20, fill="both", expand=True)
         
+        self.tab_inicio = self.tabview.add("Inicio")
         self.tab_habitos = self.tabview.add("Hábitos & Agenda")
         self.tab_tesoreria = self.tabview.add("Tesorería")
         self.tab_planeacion = self.tabview.add("Planeación (MSI)")
@@ -32,6 +36,9 @@ class ArchProductivityApp(ctk.CTk):
         self.tab_auditoria = self.tabview.add("Auditoría Patrimonial")
 
         # Inyección de dependencias de los módulos desacoplados
+        self.inicio_ui = InicioTab(self.tab_inicio)
+        self.inicio_ui.pack(fill="both", expand=True)
+
         self.habitos_ui = HabitosAgendaTab(self.tab_habitos)
         self.habitos_ui.pack(fill="both", expand=True)
 
@@ -59,7 +66,9 @@ class ArchProductivityApp(ctk.CTk):
 
     def orquestar_refrescos(self):
         pestana_activa = self.tabview.get()
-        if pestana_activa == "Dashboard Financiero":
+        if pestana_activa == "Inicio":
+            self.inicio_ui.actualizar()
+        elif pestana_activa == "Dashboard Financiero":
             self.dashboard_ui.actualizar()
         elif pestana_activa == "Tesorería":
             self.tesoreria_ui.actualizar()

@@ -130,18 +130,12 @@ class AuditoriaTab(ctk.CTkFrame):
                 "pagos_tarjeta": pagos_tarjeta_netos,
             }
 
-        # Liquidez según cuentas reales (excluye crédito: eso es pasivo, no activo)
-        cursor.execute("""
-            SELECT COALESCE(SUM(c.saldo_inicial
-                 + COALESCE((SELECT SUM(i.monto) FROM ingresos i WHERE i.cuenta_id = c.id), 0)
-                 - COALESCE((SELECT SUM(g.monto) FROM gastos g WHERE g.cuenta_id = c.id), 0)
-                 + COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_destino = c.id), 0)
-                 - COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_origen = c.id), 0)), 0),
-                   COUNT(*)
-            FROM cuentas c WHERE c.tipo != 'Crédito'
-        """)
-        liquidez_cuentas, num_cuentas = cursor.fetchone()
         conn.close()
+
+        # Liquidez según cuentas reales (excluye crédito: eso es pasivo, no activo)
+        import database
+        no_credito = [s for _c, _n, tipo, _t, s in database.obtener_saldos_cuentas() if tipo != "Crédito"]
+        liquidez_cuentas, num_cuentas = sum(no_credito), len(no_credito)
 
         tot_activos = act_l + act_f
         tot_pasivos = pas_c + pas_l

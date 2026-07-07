@@ -1,8 +1,143 @@
 import sqlite3
+import os
+import glob
+from datetime import date
 
 DB_NAME = "data.db"
+DIR_RESPALDOS = "backups"
+MAX_RESPALDOS = 30
+
+# "Ahorros" es transferencia de riqueza, no consumo: la analítica de gasto
+# (VaR, runway, pronóstico, PMC, flujos) la excluye. La conciliación de
+# Auditoría NO la excluye porque trabaja base caja (el ahorro sí mueve liquidez).
+CATEGORIA_AHORRO = "Ahorros"
+
+# Regla 50/30/20: qué categorías son necesidad; el resto (menos Ahorros) son
+# deseos, y el ahorro es el residuo del ingreso. Mantener en sincronía con
+# CATEGORIAS_GASTOS de tabs/tesoreria.py.
+CATEGORIAS_NECESIDAD = ("Vivienda", "Comida", "Transporte", "Salud",
+                        "Servicios", "Seguros", "Impuestos", "Deuda")
+
+
+def respaldar_db():
+    """Un respaldo por día en backups/, con la API de backup de SQLite
+    (segura aunque haya conexiones escribiendo). Conserva los 30 más recientes."""
+    if not os.path.exists(DB_NAME):
+        return
+    os.makedirs(DIR_RESPALDOS, exist_ok=True)
+    destino = os.path.join(DIR_RESPALDOS, f"data_{date.today().isoformat()}.db")
+    if os.path.exists(destino):
+        return
+    origen = sqlite3.connect(DB_NAME)
+    copia = sqlite3.connect(destino)
+    with copia:
+        origen.backup(copia)
+    copia.close()
+    origen.close()
+
+    respaldos = sorted(glob.glob(os.path.join(DIR_RESPALDOS, "data_*.db")))
+    for viejo in respaldos[:-MAX_RESPALDOS]:
+        os.remove(viejo)
+
+
+def obtener_saldos_cuentas():
+    """Única fuente de saldos derivados. Devuelve (id, nombre, tipo, tasa_anual, saldo)
+    donde saldo = inicial + Σingresos − Σgastos + Σtransf. recibidas − Σenviadas."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT c.id, c.nombre, c.tipo, COALESCE(c.tasa_anual, 0), c.saldo_inicial
+             + COALESCE((SELECT SUM(i.monto) FROM ingresos i WHERE i.cuenta_id = c.id), 0)
+             - COALESCE((SELECT SUM(g.monto) FROM gastos g WHERE g.cuenta_id = c.id), 0)
+             + COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_destino = c.id), 0)
+             - COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_origen = c.id), 0)
+        FROM cuentas c ORDER BY c.nombre
+    """)
+    filas = cursor.fetchall()
+    conn.close()
+    return filas
+
+
+def obtener_metas_con_progreso():
+    """(id, nombre, objetivo, cuenta_nombre, saldo, aporte_mensual_reciente, fecha_limite)
+    por meta activa. El aporte reciente = flujo neto hacia la cuenta en los
+    últimos 90 días ÷ 3, para proyectar la fecha de cumplimiento."""
+    from datetime import timedelta
+    saldos = {cid: (nombre, saldo) for cid, nombre, _t, _ta, saldo in obtener_saldos_cuentas()}
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, nombre, monto_objetivo, cuenta_id, fecha_limite FROM metas WHERE activo = 1")
+    metas = cursor.fetchall()
+    hace_90 = (date.today() - timedelta(days=90)).isoformat()
+
+    resultado = []
+    for mid, nombre, objetivo, cuenta_id, fecha_limite in metas:
+        cta_nombre, saldo = saldos.get(cuenta_id, ("(cuenta eliminada)", 0.0))
+        cursor.execute("SELECT COALESCE(SUM(monto),0) FROM ingresos WHERE cuenta_id=? AND fecha>=?", (cuenta_id, hace_90))
+        entradas = cursor.fetchone()[0]
+        cursor.execute("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE cuenta_id=? AND fecha>=?", (cuenta_id, hace_90))
+        salidas = cursor.fetchone()[0]
+        cursor.execute("SELECT COALESCE(SUM(monto),0) FROM transferencias WHERE cuenta_destino=? AND fecha>=?", (cuenta_id, hace_90))
+        transf_in = cursor.fetchone()[0]
+        cursor.execute("SELECT COALESCE(SUM(monto),0) FROM transferencias WHERE cuenta_origen=? AND fecha>=?", (cuenta_id, hace_90))
+        transf_out = cursor.fetchone()[0]
+        aporte_mensual = (entradas + transf_in - salidas - transf_out) / 3.0
+        resultado.append((mid, nombre, objetivo, cta_nombre, saldo, aporte_mensual, fecha_limite))
+    conn.close()
+    return resultado
+
+
+def generar_recurrentes():
+    """Materializa las ocurrencias vencidas de los movimientos recurrentes.
+    Idempotente: cada ocurrencia se genera una sola vez (ultima_generacion).
+    Devuelve las descripciones generadas, para poder notificarlas."""
+    import calendar
+    hoy = date.today()
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, tipo, descripcion, monto, categoria, dia_mes, cuenta_id,
+               COALESCE(ultima_generacion, '')
+        FROM recurrentes WHERE activo = 1
+    """)
+    generados = []
+    for rid, tipo, desc, monto, cat, dia, cuenta_id, ultima in cursor.fetchall():
+        if ultima:
+            anio, mes, _ = map(int, ultima.split("-"))
+            mes += 1
+            if mes > 12:
+                mes, anio = 1, anio + 1
+        else:
+            # Plantilla nueva: arranca en el mes actual (genera la ocurrencia
+            # de este mes si su día ya pasó — el usuario la está poniendo al día)
+            anio, mes = hoy.year, hoy.month
+
+        while True:
+            dia_real = min(dia, calendar.monthrange(anio, mes)[1])
+            ocurrencia = date(anio, mes, dia_real)
+            if ocurrencia > hoy:
+                break
+            fecha_str = ocurrencia.isoformat()
+            if tipo == "ingreso":
+                cursor.execute("INSERT INTO ingresos (desc, monto, fuente, fecha, cuenta_id) VALUES (?,?,?,?,?)",
+                               (desc, monto, cat, fecha_str, cuenta_id))
+            else:
+                cursor.execute("""INSERT INTO gastos (desc, monto, categoria, fecha, con_factura, es_deducible, cuenta_id)
+                                  VALUES (?,?,?,?,0,0,?)""",
+                               (desc, monto, cat, fecha_str, cuenta_id))
+            cursor.execute("UPDATE recurrentes SET ultima_generacion=? WHERE id=?", (fecha_str, rid))
+            generados.append(f"{'📈' if tipo == 'ingreso' else '📉'} {desc}: ${monto:,.2f} ({fecha_str})")
+            mes += 1
+            if mes > 12:
+                mes, anio = 1, anio + 1
+
+    conn.commit()
+    conn.close()
+    return generados
+
 
 def init_db():
+    respaldar_db()
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
@@ -126,6 +261,33 @@ def init_db():
         )
     """)
 
+    # Metas de ahorro: el progreso se mide con el saldo de la cuenta vinculada
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS metas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT,
+            monto_objetivo REAL,
+            cuenta_id INTEGER,
+            fecha_limite TEXT,
+            activo INTEGER DEFAULT 1
+        )
+    """)
+
+    # Plantillas de movimientos recurrentes (quincenas, renta, suscripciones)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS recurrentes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tipo TEXT,
+            descripcion TEXT,
+            monto REAL,
+            categoria TEXT,
+            dia_mes INTEGER,
+            cuenta_id INTEGER,
+            activo INTEGER DEFAULT 1,
+            ultima_generacion TEXT
+        )
+    """)
+
     # Migración: clasificación SAT del gasto deducible (Art. 151 LISR / decreto colegiaturas)
     cursor.execute("PRAGMA table_info(gastos)")
     columnas_gastos = [c[1] for c in cursor.fetchall()]
@@ -138,6 +300,12 @@ def init_db():
     columnas_ingresos = [c[1] for c in cursor.fetchall()]
     if "cuenta_id" not in columnas_ingresos:
         cursor.execute("ALTER TABLE ingresos ADD COLUMN cuenta_id INTEGER")
+
+    # Migración: CAT/tasa anual de las tarjetas de crédito (para el plan de pago)
+    cursor.execute("PRAGMA table_info(cuentas)")
+    columnas_cuentas = [c[1] for c in cursor.fetchall()]
+    if "tasa_anual" not in columnas_cuentas:
+        cursor.execute("ALTER TABLE cuentas ADD COLUMN tasa_anual REAL DEFAULT 0")
 
     # Módulo de Planeación (Presupuestos y Deudas/MSI)
     cursor.execute("CREATE TABLE IF NOT EXISTS presupuestos (categoria TEXT PRIMARY KEY, limite REAL)")

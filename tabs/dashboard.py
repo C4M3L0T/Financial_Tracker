@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
 from datetime import datetime, timedelta
+from database import CATEGORIA_AHORRO
 
 # Parámetros del detector de gasto hormiga
 HORMIGA_MONTO_MAX = 300.0   # ticket promedio máximo para considerarse "hormiga"
@@ -58,17 +59,19 @@ class DashboardTab(ctk.CTkFrame):
         # ========================================================
         # 1. EXTRACCIÓN DE DATOS Y KPI CENTRAL
         # ========================================================
+        # "Ahorros" se excluye del consumo: es transferencia de riqueza, no gasto
+        # (mantenerlo inflaría VaR, runway, pronóstico y PMC)
         cursor.execute("SELECT SUM(monto) FROM ingresos")
         total_in = cursor.fetchone()[0] or 0.0
-        cursor.execute("SELECT SUM(monto) FROM gastos")
+        cursor.execute("SELECT SUM(monto) FROM gastos WHERE categoria != ?", (CATEGORIA_AHORRO,))
         total_out = cursor.fetchone()[0] or 0.0
         flujo_neto = total_in - total_out
-        
+
         color_flujo = "#10B981" if flujo_neto >= 0 else "#EF4444"
         self.lbl_flujo.configure(text=f"Flujo Total Neto: ${flujo_neto:,.2f}", text_color=color_flujo)
 
         query_in = f"SELECT strftime('{formato_temporal}', fecha) as periodo, SUM(monto) FROM ingresos GROUP BY periodo ORDER BY periodo ASC"
-        query_out = f"SELECT strftime('{formato_temporal}', fecha) as periodo, SUM(monto) FROM gastos GROUP BY periodo ORDER BY periodo ASC"
+        query_out = f"SELECT strftime('{formato_temporal}', fecha) as periodo, SUM(monto) FROM gastos WHERE categoria != '{CATEGORIA_AHORRO}' GROUP BY periodo ORDER BY periodo ASC"
         
         datos_ingresos = dict(cursor.execute(query_in).fetchall())
         datos_gastos = dict(cursor.execute(query_out).fetchall())
@@ -151,7 +154,7 @@ class DashboardTab(ctk.CTkFrame):
         axs[1, 0].grid(True, linestyle=":", alpha=0.1)
 
         # --- [1,1] Estructura de Costos Microeconómicos (Pareto) ---
-        cursor.execute("SELECT categoria, SUM(monto) FROM gastos GROUP BY categoria ORDER BY SUM(monto) ASC")
+        cursor.execute("SELECT categoria, SUM(monto) FROM gastos WHERE categoria != ? GROUP BY categoria ORDER BY SUM(monto) ASC", (CATEGORIA_AHORRO,))
         datos_cat = cursor.fetchall()
         if datos_cat:
             cats = [d[0] for d in datos_cat]
@@ -192,8 +195,9 @@ class DashboardTab(ctk.CTkFrame):
         # --- [2,0] Value at Risk 95% del gasto (siempre mensual, independiente del selector) ---
         cursor.execute("""
             SELECT strftime('%Y-%m', fecha) AS p, SUM(monto) FROM gastos
+            WHERE categoria != ?
             GROUP BY p ORDER BY p ASC
-        """)
+        """, (CATEGORIA_AHORRO,))
         serie_mensual = cursor.fetchall()[-12:]
         if len(serie_mensual) >= 2:
             meses_var = [r[0] for r in serie_mensual]
@@ -215,7 +219,7 @@ class DashboardTab(ctk.CTkFrame):
         # --- [2,1] Propensión Marginal al Consumo y al Ahorro (PMC/PMA) ---
         cursor.execute("SELECT strftime('%Y-%m', fecha) AS p, SUM(monto) FROM ingresos GROUP BY p")
         ing_mensual = dict(cursor.fetchall())
-        cursor.execute("SELECT strftime('%Y-%m', fecha) AS p, SUM(monto) FROM gastos GROUP BY p")
+        cursor.execute("SELECT strftime('%Y-%m', fecha) AS p, SUM(monto) FROM gastos WHERE categoria != ? GROUP BY p", (CATEGORIA_AHORRO,))
         gas_mensual = dict(cursor.fetchall())
         meses_comunes = sorted(set(ing_mensual) & set(gas_mensual))[-13:]
         pmc_x, pmc_y = [], []
@@ -241,11 +245,11 @@ class DashboardTab(ctk.CTkFrame):
         fecha_corte = (datetime.now() - timedelta(days=HORMIGA_VENTANA_DIAS)).strftime("%Y-%m-%d")
         cursor.execute("""
             SELECT desc, COUNT(*), SUM(monto) FROM gastos
-            WHERE fecha >= ?
+            WHERE fecha >= ? AND categoria != ?
             GROUP BY LOWER(desc)
             HAVING COUNT(*) >= ? AND AVG(monto) <= ?
             ORDER BY SUM(monto) DESC LIMIT 5
-        """, (fecha_corte, HORMIGA_MIN_REPETICIONES, HORMIGA_MONTO_MAX))
+        """, (fecha_corte, CATEGORIA_AHORRO, HORMIGA_MIN_REPETICIONES, HORMIGA_MONTO_MAX))
         hormigas = cursor.fetchall()
         if hormigas:
             etiquetas = [f"{d[:14]} (×{n})" for d, n, _ in hormigas][::-1]
