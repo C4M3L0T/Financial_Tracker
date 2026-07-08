@@ -198,6 +198,12 @@ def vigilante_diario():
                                  "🔁 *Recurrentes registrados:*\n" + "\n".join(generados),
                                  parse_mode="Markdown")
 
+            rendimientos = database.generar_rendimientos()
+            if rendimientos:
+                bot.send_message(MI_TELEGRAM_ID,
+                                 "📈 *Rendimientos devengados:*\n" + "\n".join(rendimientos),
+                                 parse_mode="Markdown")
+
             hoy = datetime.now().strftime("%Y-%m-%d")
             if datetime.now().hour >= 9 and obtener_estado("ultimo_aviso") != hoy:
                 alertas = construir_alertas()

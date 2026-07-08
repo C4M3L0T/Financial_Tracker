@@ -22,6 +22,7 @@ class ArchProductivityApp(ctk.CTk):
         try:
             database.init_db()
             database.generar_recurrentes()
+            database.generar_rendimientos()
         except database.MySQLError as e:
             from tkinter import messagebox
             messagebox.showerror(

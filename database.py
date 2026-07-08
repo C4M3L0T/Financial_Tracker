@@ -127,6 +127,26 @@ def obtener_saldos_cuentas():
     return filas
 
 
+def proyectar_rendimiento(saldo, tasa_anual, dias=1):
+    """Interés compuesto DIARIO proyectado a `dias` días, como pagan las
+    Cajitas Nu y cuentas de inversión líquidas: la tasa_anual de la cuenta
+    es nominal anual y se prorratea a r = tasa/365 capitalizando cada día.
+    Estimación bruta (sin retención de ISR) sobre el saldo indicado."""
+    if saldo <= 0 or tasa_anual <= 0:
+        return 0.0
+    return saldo * ((1 + tasa_anual / 100.0 / 365.0) ** dias - 1)
+
+
+def cuentas_con_rendimiento():
+    """Cuentas que generan rendimiento: toda cuenta NO-Crédito con
+    tasa_anual > 0 y saldo positivo (en Crédito la tasa es el CAT de la
+    deuda, que consume el plan de pago de Planeación). Devuelve
+    (id, nombre, tasa_anual, saldo)."""
+    return [(cid, nombre, tasa, saldo)
+            for cid, nombre, tipo, tasa, saldo in obtener_saldos_cuentas()
+            if tipo != "Crédito" and tasa > 0 and saldo > 0]
+
+
 def obtener_metas_con_progreso():
     """(id, nombre, objetivo, cuenta_nombre, saldo, aporte_mensual_reciente, fecha_limite)
     por meta activa. El aporte reciente = flujo neto hacia la cuenta en los
@@ -200,6 +220,69 @@ def generar_recurrentes():
             if mes > 12:
                 mes, anio = 1, anio + 1
 
+    conn.commit()
+    conn.close()
+    return generados
+
+
+def generar_rendimientos():
+    """Materializa el rendimiento compuesto DIARIO de las cuentas de ahorro/
+    inversión (Cajitas Nu): un ingreso 'Rendimientos' por día y por cuenta
+    no-Crédito con tasa_anual > 0, calculado sobre el saldo derivado al cierre
+    del día anterior (los rendimientos ya generados componen solos al entrar
+    al saldo). Idempotente vía cuentas.ultimo_rendimiento; una cuenta recién
+    configurada se ancla HOY sin generar nada (su saldo se asume conciliado
+    con el banco) y empieza a devengar mañana. Es un ESTIMADO bruto: los
+    ajustes contra el estado de cuenta real se capturan a mano en Tesorería.
+    Devuelve descripciones de lo generado, para poder notificarlas."""
+    from datetime import timedelta
+    hoy = date.today()
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("""SELECT id, nombre, COALESCE(tasa_anual, 0),
+                             COALESCE(ultimo_rendimiento, '')
+                      FROM cuentas WHERE tipo != 'Crédito' ORDER BY nombre""")
+    generados = []
+    for cid, nombre, tasa, ultimo in cursor.fetchall():
+        if tasa <= 0:
+            continue
+        if not ultimo:
+            cursor.execute("UPDATE cuentas SET ultimo_rendimiento=? WHERE id=?",
+                           (hoy.isoformat(), cid))
+            continue
+        ancla = date.fromisoformat(ultimo)
+        if (hoy - ancla).days > 45:
+            # Hueco anormal (servidor apagado semanas, tasa reactivada tras
+            # meses): backfillear a ciegas ensucia más que ayuda — re-anclar
+            # y que el usuario capture el acumulado real como ajuste manual.
+            cursor.execute("UPDATE cuentas SET ultimo_rendimiento=? WHERE id=?",
+                           (hoy.isoformat(), cid))
+            generados.append(f"⚠ {nombre}: {(hoy - ancla).days} días sin generar rendimientos; "
+                             "re-anclada a hoy sin backfill — captura el acumulado real como ajuste")
+            continue
+        acumulado = 0.0
+        dia = ancla + timedelta(days=1)
+        while dia <= hoy:
+            corte = (dia - timedelta(days=1)).isoformat()
+            cursor.execute("""
+                SELECT c.saldo_inicial
+                     + COALESCE((SELECT SUM(i.monto) FROM ingresos i WHERE i.cuenta_id = c.id AND i.fecha <= ?), 0)
+                     - COALESCE((SELECT SUM(g.monto) FROM gastos g WHERE g.cuenta_id = c.id AND g.fecha <= ?), 0)
+                     + COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_destino = c.id AND t.fecha <= ?), 0)
+                     - COALESCE((SELECT SUM(t.monto) FROM transferencias t WHERE t.cuenta_origen = c.id AND t.fecha <= ?), 0)
+                FROM cuentas c WHERE c.id = ?
+            """, (corte, corte, corte, corte, cid))
+            saldo = cursor.fetchone()[0]
+            rendimiento = proyectar_rendimiento(saldo, tasa)
+            if rendimiento > 0:
+                cursor.execute("INSERT INTO ingresos (`desc`, monto, fuente, fecha, cuenta_id) VALUES (?,?,?,?,?)",
+                               (f"Rendimiento {nombre}", rendimiento, "Rendimientos", dia.isoformat(), cid))
+                acumulado += rendimiento
+            cursor.execute("UPDATE cuentas SET ultimo_rendimiento=? WHERE id=?",
+                           (dia.isoformat(), cid))
+            dia += timedelta(days=1)
+        if acumulado > 0:
+            generados.append(f"📈 {nombre}: +${acumulado:,.2f} de rendimiento")
     conn.commit()
     conn.close()
     return generados
@@ -391,8 +474,13 @@ def init_db():
         cursor.execute("ALTER TABLE ingresos ADD COLUMN cuenta_id INT")
 
     # Migración: CAT/tasa anual de las tarjetas de crédito (para el plan de pago)
-    if "tasa_anual" not in _columnas(cursor, "cuentas"):
+    # y de las cuentas de ahorro (rendimiento tipo Cajitas Nu)
+    columnas_cuentas = _columnas(cursor, "cuentas")
+    if "tasa_anual" not in columnas_cuentas:
         cursor.execute("ALTER TABLE cuentas ADD COLUMN tasa_anual DOUBLE DEFAULT 0")
+    # Migración: ancla del devengo diario automático (generar_rendimientos)
+    if "ultimo_rendimiento" not in columnas_cuentas:
+        cursor.execute("ALTER TABLE cuentas ADD COLUMN ultimo_rendimiento TEXT")
 
     # Módulo de Planeación (Presupuestos y Deudas/MSI)
     cursor.execute("""

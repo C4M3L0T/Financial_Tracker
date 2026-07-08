@@ -288,32 +288,47 @@ class TesoreriaTab(ctk.CTkFrame):
     def actualizar_cuentas(self):
         for w in self.frame_cuentas.winfo_children(): w.destroy()
 
-        ctk.CTkLabel(self.frame_cuentas, text="💳 Cuentas:", font=("Urbanist", 13, "bold"),
-                     text_color="#38BDF8").pack(side="left", padx=(15, 10), pady=8)
+        cuentas = database.obtener_saldos_cuentas()
+        self.cuentas_map = {nombre: cid for cid, nombre, _t, _ta, _s in cuentas}
 
-        cuentas = self.obtener_cuentas_con_saldo()
-        self.cuentas_map = {nombre: cid for cid, nombre, _, _ in cuentas}
+        # Dos filas: botones arriba, tarjetas abajo en un carril con scroll
+        # horizontal. En una sola fila las tarjetas (6+ cuentas) y los botones
+        # se pelean el ancho y pack termina dejando algo fuera de la ventana.
+        fila_botones = ctk.CTkFrame(self.frame_cuentas, fg_color="transparent")
+        fila_botones.pack(fill="x", padx=10, pady=(6, 0))
+        ctk.CTkLabel(fila_botones, text="💳 Cuentas:", font=("Urbanist", 13, "bold"),
+                     text_color="#38BDF8").pack(side="left", padx=(5, 10))
+        ctk.CTkButton(fila_botones, text="⚙ Administrar", width=110, fg_color="#334155",
+                      hover_color="#475569", command=self.abrir_admin_cuentas).pack(side="right", padx=(5, 5))
+        ctk.CTkButton(fila_botones, text="⇄ Pagar tarjeta / Transferir", width=170, fg_color="#3B82F6",
+                      hover_color="#2563EB", command=self.abrir_transferencia).pack(side="right", padx=5)
+        ctk.CTkButton(fila_botones, text="🔁 Recurrentes", width=120, fg_color="#A855F7",
+                      hover_color="#9333EA", command=self.abrir_recurrentes).pack(side="right", padx=5)
+        ctk.CTkButton(fila_botones, text="📈 Rendimientos", width=125, fg_color="#F59E0B",
+                      hover_color="#D97706", command=self.abrir_rendimientos).pack(side="right", padx=5)
+        ctk.CTkButton(fila_botones, text="⬇ CSV", width=70, fg_color="#10B981",
+                      hover_color="#059669", command=self.exportar_csv).pack(side="right", padx=5)
+
+        carril = ctk.CTkScrollableFrame(self.frame_cuentas, orientation="horizontal",
+                                        height=84, fg_color="transparent")
+        carril.pack(fill="x", padx=8, pady=(2, 4))
 
         if not cuentas:
-            ctk.CTkLabel(self.frame_cuentas, text="Sin cuentas registradas — créalas con ⚙",
+            ctk.CTkLabel(carril, text="Sin cuentas registradas — créalas con ⚙",
                          font=("Urbanist", 12), text_color="#64748B").pack(side="left", padx=5)
-        for _cid, nombre, tipo, saldo in cuentas:
+        for _cid, nombre, tipo, tasa, saldo in cuentas:
             color = "#10B981" if saldo >= 0 else "#EF4444"
-            tarjeta = ctk.CTkFrame(self.frame_cuentas, fg_color="#1e293b")
-            tarjeta.pack(side="left", padx=4, pady=6)
+            genera = tipo != "Crédito" and tasa > 0 and saldo > 0
+            tarjeta = ctk.CTkFrame(carril, fg_color="#1e293b")
+            tarjeta.pack(side="left", padx=4, pady=2)
             ctk.CTkLabel(tarjeta, text=f"{nombre} ({tipo})", font=("Urbanist", 11),
                          text_color="#94A3B8").pack(padx=10, pady=(4, 0))
             ctk.CTkLabel(tarjeta, text=f"${saldo:,.2f}", font=("Urbanist", 13, "bold"),
-                         text_color=color).pack(padx=10, pady=(0, 4))
-
-        ctk.CTkButton(self.frame_cuentas, text="⚙ Administrar", width=110, fg_color="#334155",
-                      hover_color="#475569", command=self.abrir_admin_cuentas).pack(side="right", padx=(5, 15), pady=8)
-        ctk.CTkButton(self.frame_cuentas, text="⇄ Pagar tarjeta / Transferir", width=170, fg_color="#3B82F6",
-                      hover_color="#2563EB", command=self.abrir_transferencia).pack(side="right", padx=5, pady=8)
-        ctk.CTkButton(self.frame_cuentas, text="🔁 Recurrentes", width=120, fg_color="#A855F7",
-                      hover_color="#9333EA", command=self.abrir_recurrentes).pack(side="right", padx=5, pady=8)
-        ctk.CTkButton(self.frame_cuentas, text="⬇ CSV", width=70, fg_color="#10B981",
-                      hover_color="#059669", command=self.exportar_csv).pack(side="right", padx=5, pady=8)
+                         text_color=color).pack(padx=10, pady=(0, 4 if not genera else 0))
+            if genera:
+                por_dia = database.proyectar_rendimiento(saldo, tasa)
+                ctk.CTkLabel(tarjeta, text=f"📈 {tasa:g}% · +${por_dia:,.2f}/día",
+                             font=("Urbanist", 10), text_color="#F59E0B").pack(padx=10, pady=(0, 4))
 
         # Refrescar selectores de cuenta en ambos formularios
         opciones = [SIN_CUENTA] + list(self.cuentas_map.keys())
@@ -421,6 +436,105 @@ class TesoreriaTab(ctk.CTkFrame):
             self.actualizar_cuentas()
 
         refrescar_transferencias()
+
+    def abrir_rendimientos(self):
+        """Proyección del interés compuesto diario que pagan las cuentas de
+        ahorro/inversión (Cajitas Nu): toda cuenta no-Crédito con tasa_anual > 0.
+        Desde aquí también se captura el rendimiento realmente depositado como
+        ingreso 'Rendimientos', para que el saldo derivado siga cuadrando con
+        el del banco."""
+        cuentas = database.cuentas_con_rendimiento()
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Rendimientos Proyectados")
+        dialog.geometry("640x470")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        if not cuentas:
+            ctk.CTkLabel(dialog, text="Ninguna cuenta genera rendimiento.\n\n"
+                         "Asigna la tasa anual a tus cuentas de ahorro/inversión\n"
+                         "(ej. Cajita Nu Turbo = 13%) en ⚙ Administrar → ✏.",
+                         font=("Urbanist", 13), text_color="#94A3B8", justify="left").pack(pady=40, padx=20)
+            return
+
+        def registrar(cuenta_id, nombre):
+            d2 = ctk.CTkToplevel(dialog)
+            d2.title("Registrar Rendimiento")
+            d2.geometry("340x240")
+            d2.transient(dialog)
+            d2.grab_set()
+
+            ctk.CTkLabel(d2, text=f"Ajuste de rendimiento en {nombre} ($):",
+                         font=("Urbanist", 11), text_color="#94A3B8").pack(pady=(15, 0), padx=20, anchor="w")
+            e_m = ctk.CTkEntry(d2, placeholder_text="Diferencia vs estado de cuenta real")
+            e_m.pack(pady=2, padx=20, fill="x")
+            ctk.CTkLabel(d2, text="Fecha (vacío = hoy):", font=("Urbanist", 11),
+                         text_color="#94A3B8").pack(padx=20, anchor="w")
+            e_f = ctk.CTkEntry(d2, placeholder_text="YYYY-MM-DD")
+            e_f.pack(pady=2, padx=20, fill="x")
+
+            def guardar():
+                try:
+                    monto = float(e_m.get().strip())
+                    if monto <= 0: raise ValueError
+                except ValueError:
+                    messagebox.showerror("Error", "El monto debe ser un número mayor a cero.", parent=d2)
+                    return
+                fecha = e_f.get().strip() or datetime.now().strftime("%Y-%m-%d")
+                try:
+                    datetime.strptime(fecha, "%Y-%m-%d")
+                except ValueError:
+                    messagebox.showerror("Fecha Inválida", "Usa YYYY-MM-DD o déjala vacía para hoy.", parent=d2)
+                    return
+                conn = database.conectar()
+                conn.cursor().execute(
+                    "INSERT INTO ingresos (`desc`, monto, fuente, fecha, cuenta_id) VALUES (?,?,?,?,?)",
+                    (f"Rendimiento {nombre}", monto, "Rendimientos", fecha, cuenta_id))
+                conn.commit()
+                conn.close()
+                d2.destroy()
+                dialog.destroy()
+                self.actualizar()
+
+            ctk.CTkButton(d2, text="Registrar Ingreso", fg_color="#10B981", hover_color="#059669",
+                          command=guardar).pack(pady=14, padx=20, fill="x")
+
+        ctk.CTkLabel(dialog, text="Estimación BRUTA sobre el saldo actual, con capitalización diaria "
+                     "(así abonan las Cajitas Nu). La tasa de cada cuenta se edita en ⚙ Administrar → ✏.",
+                     font=("Urbanist", 11), text_color="#94A3B8", wraplength=510, justify="left").pack(pady=(12, 6), padx=20, anchor="w")
+
+        lista = ctk.CTkScrollableFrame(dialog, height=240)
+        lista.pack(fill="both", expand=True, padx=20, pady=(0, 6))
+
+        tot_dia = tot_mes = tot_anio = 0.0
+        for cid, nombre, tasa, saldo in cuentas:
+            por_dia = database.proyectar_rendimiento(saldo, tasa, 1)
+            por_mes = database.proyectar_rendimiento(saldo, tasa, 30)
+            por_anio = database.proyectar_rendimiento(saldo, tasa, 365)
+            tot_dia += por_dia
+            tot_mes += por_mes
+            tot_anio += por_anio
+            efectiva = ((1 + tasa / 100.0 / 365.0) ** 365 - 1) * 100
+
+            row = ctk.CTkFrame(lista, fg_color="#1e293b")
+            row.pack(fill="x", pady=3, padx=2)
+            ctk.CTkButton(row, text="➕ Ajustar", width=100, fg_color="#10B981", hover_color="#059669",
+                          command=lambda c=cid, n=nombre: registrar(c, n)).pack(side="right", padx=8, pady=8)
+            info = ctk.CTkFrame(row, fg_color="transparent")
+            info.pack(side="left", fill="x", expand=True, padx=10, pady=6)
+            ctk.CTkLabel(info, text=f"{nombre} — ${saldo:,.2f} al {tasa:g}% anual",
+                         font=("Urbanist", 13, "bold"), text_color="#E2E8F0", anchor="w").pack(fill="x")
+            ctk.CTkLabel(info, text=f"+${por_dia:,.2f} hoy · +${por_mes:,.2f} en 30 días · "
+                         f"+${por_anio:,.2f} al año ({efectiva:.2f}% efectivo)",
+                         font=("Urbanist", 12), text_color="#F59E0B", anchor="w").pack(fill="x")
+
+        ctk.CTkLabel(dialog, text=f"TOTAL: +${tot_dia:,.2f}/día · +${tot_mes:,.2f}/30 días · +${tot_anio:,.2f}/año",
+                     font=("Urbanist", 14, "bold"), text_color="#10B981").pack(pady=(2, 4), padx=20)
+        ctk.CTkLabel(dialog, text="El rendimiento diario se genera SOLO (al abrir la app, o cada hora vía el bot del "
+                     "servidor) como ingresos 'Rendimientos'. ➕ Ajustar es para capturar la diferencia cuando el "
+                     "estimado no cuadre con el estado de cuenta real.",
+                     font=("Urbanist", 10), text_color="#64748B", wraplength=590, justify="left").pack(pady=(0, 12), padx=20, anchor="w")
 
     def abrir_recurrentes(self):
         """Plantillas que se materializan solas cada mes (quincenas, renta,
@@ -589,7 +703,7 @@ class TesoreriaTab(ctk.CTkFrame):
     def abrir_admin_cuentas(self):
         dialog = ctk.CTkToplevel(self)
         dialog.title("Administrar Cuentas")
-        dialog.geometry("420x420")
+        dialog.geometry("420x465")
         dialog.transient(self)
         dialog.grab_set()
 
@@ -632,7 +746,7 @@ class TesoreriaTab(ctk.CTkFrame):
             e_sal = ctk.CTkEntry(d2)
             e_sal.insert(0, f"{fila[2]:g}")
             e_sal.pack(pady=2, padx=20, fill="x")
-            ctk.CTkLabel(d2, text="CAT/tasa anual % (solo crédito):", font=("Urbanist", 11), text_color="#94A3B8").pack(padx=20, anchor="w")
+            ctk.CTkLabel(d2, text="Tasa anual % (CAT en crédito / rendimiento en ahorro):", font=("Urbanist", 11), text_color="#94A3B8").pack(padx=20, anchor="w")
             e_tas = ctk.CTkEntry(d2)
             e_tas.insert(0, f"{fila[3]:g}")
             e_tas.pack(pady=2, padx=20, fill="x")
@@ -689,13 +803,17 @@ class TesoreriaTab(ctk.CTkFrame):
         c_tipo.pack(pady=3, padx=15, fill="x")
         e_saldo = ctk.CTkEntry(dialog, placeholder_text="Saldo inicial hoy ($)")
         e_saldo.pack(pady=3, padx=15, fill="x")
+        e_tasa = ctk.CTkEntry(dialog, placeholder_text="Tasa anual % — CAT en crédito, rendimiento en ahorro (opcional)")
+        e_tasa.pack(pady=3, padx=15, fill="x")
 
         def crear():
             nombre = e_nombre.get().strip()
             try:
                 saldo_inicial = float(e_saldo.get().strip() or 0)
+                tasa = float(e_tasa.get().strip() or 0)
+                if tasa < 0: raise ValueError
             except ValueError:
-                messagebox.showerror("Error", "El saldo inicial debe ser numérico.", parent=dialog)
+                messagebox.showerror("Error", "Saldo inicial y tasa deben ser numéricos.", parent=dialog)
                 return
             if not nombre:
                 messagebox.showerror("Error", "Ponle nombre a la cuenta.", parent=dialog)
@@ -703,8 +821,8 @@ class TesoreriaTab(ctk.CTkFrame):
             conn = database.conectar()
             try:
                 conn.cursor().execute(
-                    "INSERT INTO cuentas (nombre, tipo, saldo_inicial, fecha_inicial) VALUES (?,?,?,?)",
-                    (nombre, c_tipo.get(), saldo_inicial, datetime.now().strftime("%Y-%m-%d")))
+                    "INSERT INTO cuentas (nombre, tipo, saldo_inicial, fecha_inicial, tasa_anual) VALUES (?,?,?,?,?)",
+                    (nombre, c_tipo.get(), saldo_inicial, datetime.now().strftime("%Y-%m-%d"), tasa))
                 conn.commit()
             except database.IntegrityError:
                 messagebox.showerror("Error", "Ya existe una cuenta con ese nombre.", parent=dialog)
@@ -712,6 +830,7 @@ class TesoreriaTab(ctk.CTkFrame):
                 conn.close()
             e_nombre.delete(0, 'end')
             e_saldo.delete(0, 'end')
+            e_tasa.delete(0, 'end')
             refrescar_lista()
             self.actualizar_cuentas()
 

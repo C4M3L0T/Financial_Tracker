@@ -68,7 +68,14 @@ servidor/instalar_timers.sh cliente  # copia horaria del dump a backups/ (requie
 
 ```bash
 # En la máquina servidor:
-sudo pacman -S --needed python-pymysql python-pytelegrambotapi
+sudo pacman -S --needed python-pymysql
+
+# python-pytelegrambotapi es de AUR, no de los repos oficiales.
+# Con un AUR helper:  yay -S python-pytelegrambotapi
+# Sin AUR helper:
+sudo pacman -S --needed base-devel git
+git clone https://aur.archlinux.org/python-pytelegrambotapi.git /tmp/ptba
+(cd /tmp/ptba && makepkg -si)
 cd ~/arch_tracker
 cp config.example.py config.py       # token + MI_CHAT_ID + DB_HOST = "127.0.0.1"
 
