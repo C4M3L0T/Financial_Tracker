@@ -1,4 +1,4 @@
-import sqlite3
+import database
 import random
 from datetime import datetime, timedelta
 
@@ -6,28 +6,12 @@ from datetime import datetime, timedelta
 CATEGORIAS_GASTOS = ["Vivienda", "Comida", "Transporte", "Educación", "Ahorros", "Salud", "Recreación", "Suscripciones", "Otros"]
 FUENTES_INGRESO = ["Salario", "Freelance", "Rendimientos", "Ventas", "Otros"]
 
-def crear_tablas(cursor):
-    cursor.execute("DROP TABLE IF EXISTS ingresos")
-    cursor.execute("DROP TABLE IF EXISTS gastos")
-    cursor.execute("DROP TABLE IF EXISTS deudas_msi")
-
-    cursor.execute("""
-        CREATE TABLE ingresos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, desc TEXT, monto REAL, fuente TEXT, fecha TEXT
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE gastos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, desc TEXT, monto REAL, categoria TEXT, 
-            fecha TEXT, con_factura INTEGER, es_deducible INTEGER
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE deudas_msi (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, desc TEXT, monto_total REAL, mensualidad REAL, 
-            meses_totales INTEGER, meses_pagados INTEGER
-        )
-    """)
+def limpiar_tablas(cursor):
+    # El esquema lo garantiza database.init_db(); aquí solo se vacían las
+    # tablas que este mock repuebla (TRUNCATE reinicia los AUTO_INCREMENT)
+    cursor.execute("TRUNCATE TABLE ingresos")
+    cursor.execute("TRUNCATE TABLE gastos")
+    cursor.execute("TRUNCATE TABLE deudas_msi")
 
 def generar_datos_historicos(cursor):
     # Usando la fecha de hoy como referencia
@@ -39,22 +23,22 @@ def generar_datos_historicos(cursor):
         
         # 1. INGRESOS
         # Trabajo 1: $15,000 al mes (dividido en dos quincenas de $7,500)
-        cursor.execute("INSERT INTO ingresos (desc, monto, fuente, fecha) VALUES (?,?,?,?)",
+        cursor.execute("INSERT INTO ingresos (`desc`, monto, fuente, fecha) VALUES (?,?,?,?)",
                        ("Quincena 1 (Principal)", 7500.00, "Salario", f"{str_fecha_base}-15"))
-        cursor.execute("INSERT INTO ingresos (desc, monto, fuente, fecha) VALUES (?,?,?,?)",
+        cursor.execute("INSERT INTO ingresos (`desc`, monto, fuente, fecha) VALUES (?,?,?,?)",
                        ("Quincena 2 (Principal)", 7500.00, "Salario", f"{str_fecha_base}-28"))
         
         # Trabajo 2: $800 a la semana (4 semanas simuladas por mes en días específicos)
         dias_semana = [7, 14, 21, 28]
         for dia in dias_semana:
-            cursor.execute("INSERT INTO ingresos (desc, monto, fuente, fecha) VALUES (?,?,?,?)",
+            cursor.execute("INSERT INTO ingresos (`desc`, monto, fuente, fecha) VALUES (?,?,?,?)",
                            ("Pago Semanal (Secundario)", 800.00, "Salario", f"{str_fecha_base}-{dia:02d}"))
 
         # 2. GASTOS
         # Objetivo mensual promedio de $8,000. 
         # Definimos un gasto fijo base (ej. renta/cuota escolar de $3,500)
         gasto_fijo = 3500.00
-        cursor.execute("INSERT INTO gastos (desc, monto, categoria, fecha, con_factura, es_deducible) VALUES (?,?,?,?,?,?)",
+        cursor.execute("INSERT INTO gastos (`desc`, monto, categoria, fecha, con_factura, es_deducible) VALUES (?,?,?,?,?,?)",
                        ("Gasto Fijo (Renta/Escuela)", gasto_fijo, "Vivienda", f"{str_fecha_base}-05", 0, 0))
         
         # El resto de los gastos oscilará para que el total del mes promedie $8,000
@@ -73,7 +57,7 @@ def generar_datos_historicos(cursor):
             dia_rnd = random.randint(1, 28)
             es_deducible = 1 if cat_rnd == "Educación" else 0
             
-            cursor.execute("INSERT INTO gastos (desc, monto, categoria, fecha, con_factura, es_deducible) VALUES (?,?,?,?,?,?)",
+            cursor.execute("INSERT INTO gastos (`desc`, monto, categoria, fecha, con_factura, es_deducible) VALUES (?,?,?,?,?,?)",
                            (f"Gasto en {cat_rnd}", monto_transaccion, cat_rnd, f"{str_fecha_base}-{dia_rnd:02d}", es_deducible, es_deducible))
             
             gasto_acumulado += monto_transaccion
@@ -81,21 +65,22 @@ def generar_datos_historicos(cursor):
     # 3. PASIVOS / MSI
     # Un gasto común y realista para un estudiante que trabaja (una computadora a plazos)
     cursor.execute("""
-        INSERT INTO deudas_msi (desc, monto_total, mensualidad, meses_totales, meses_pagados) 
+        INSERT INTO deudas_msi (`desc`, monto_total, mensualidad, meses_totales, meses_pagados) 
         VALUES (?,?,?,?,?)
     """, ("Laptop Universidad", 12000.00, 1000.00, 12, 5))
 
 def main():
     print("Reconstruyendo base de datos con perfil de estudiante (Ingreso: ~$18.2k, Gasto: ~$8k)...")
-    conn = sqlite3.connect("data.db")
+    database.init_db()
+    conn = database.conectar()
     cursor = conn.cursor()
-    
-    crear_tablas(cursor)
+
+    limpiar_tablas(cursor)
     generar_datos_historicos(cursor)
-    
+
     conn.commit()
     conn.close()
-    print("¡Base de datos 'data.db' sincronizada exitosamente con tu escenario realista!")
+    print("¡Base de datos sincronizada exitosamente con tu escenario realista!")
 
 if __name__ == "__main__":
     main()

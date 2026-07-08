@@ -4,37 +4,46 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-"Arch Productivity Hub" — a personal finance & habit-tracking desktop app for a single user in Mexico, built with `customtkinter`. It models NIF (Mexican financial reporting standards) balance sheets, SAT/LISR tax deductions, MSI (meses sin intereses) debt tracking, and habit/agenda logging, all backed by a local SQLite file (`data.db`). A companion Telegram bot allows capturing expenses from a phone.
+"Arch Productivity Hub" — a personal finance & habit-tracking desktop app for a single user in Mexico, built with `customtkinter`. It models NIF (Mexican financial reporting standards) balance sheets, SAT/LISR tax deductions, MSI (meses sin intereses) debt tracking, and habit/agenda logging, all backed by a **shared MariaDB server** (Docker container on an always-on machine — see `servidor/README.md`) so the app can run on several computers against the same data. A companion Telegram bot, which runs on the server machine, allows capturing expenses from a phone. The old per-machine SQLite `data.db` is legacy: it is only read by `migrar_a_mariadb.py` (one-time data migration) and kept as a historical backup.
 
 ## Running
 
 ```bash
-python main.py           # Launch the desktop app (creates/opens data.db in cwd)
-python bot_listener.py    # Run the Telegram capture bot directly (needs config.py, see below)
-python generar_mock.py    # DESTRUCTIVE: drops and repopulates ingresos/gastos/deudas_msi with 12 months of fake data
+python main.py             # Desktop app (needs the MariaDB server reachable + config.py)
+python bot_listener.py     # Telegram capture bot (runs on the SERVER machine; needs config.py)
+python migrar_a_mariadb.py # One-time: copy the legacy data.db into the MariaDB server (refuses if target has data; --forzar to override)
+python generar_mock.py     # DESTRUCTIVE: TRUNCATEs ingresos/gastos/deudas_msi ON THE SHARED SERVER and repopulates with 12 months of fake data
 ```
 
-`bot_listener.py` is normally run as a systemd **user** service instead of directly, so it survives crashes/network drops without manual restart:
+**Server side** (`servidor/`): `docker-compose.yml` runs `mariadb:lts` (db `arch_tracker`, user `arch`, passwords in `servidor/.env` — gitignored, template in `.env.example`). Backups are logical dumps, hourly: `respaldo.sh` on the server (into `servidor/respaldos/`), `jalar_respaldo.sh` on each client over plain TCP (into `backups/`) — both installed as systemd user timers by `instalar_timers.sh servidor|cliente`. The full runbook (bring up a server from zero, connect a new client, restore a dump onto a replacement machine) is `servidor/README.md` — keep it in sync when changing anything under `servidor/`.
+
+`bot_listener.py` runs as a systemd **user** service on the server machine, so it survives crashes/network drops without manual restart. It must run on exactly ONE machine (two pollers on the same token conflict):
 ```bash
 systemctl --user status bot_listener.service       # check it's running
 journalctl --user -u bot_listener.service -f       # tail logs
 systemctl --user restart bot_listener.service       # after editing bot_listener.py
 ```
-The unit file lives at `systemd/bot_listener.service` in this repo; the installed copy is `~/.config/systemd/user/bot_listener.service` (`enable-linger` is on for this user so it starts without an active login session).
+The unit template is `systemd/bot_listener.service` (uses `%h/arch_tracker`; adjust if the repo lives elsewhere); the installed copy is `~/.config/systemd/user/bot_listener.service` (`enable-linger` is on so it starts without an active login session).
 
 There is no test suite, linter, or build step — verification is manual (run the app, exercise the tab).
 
 ### Local secrets
 
-`config.py` (gitignored, must be created manually) defines:
+`config.py` (gitignored; copy from `config.example.py`) defines the DB connection for BOTH the app and the bot, plus the bot credentials:
 ```python
-TELEGRAM_BOT_TOKEN = "..."
-MI_CHAT_ID = 123456789   # your numeric Telegram user ID; the bot ignores/blocks all other senders
+DB_HOST = "192.168.1.50"   # server IP ("127.0.0.1" on the server itself)
+DB_PORT = 3306
+DB_USER = "arch"
+DB_PASSWORD = "..."         # = MARIADB_PASSWORD in servidor/.env
+DB_NAME = "arch_tracker"
+TELEGRAM_BOT_TOKEN = "..."  # only needed where the bot runs
+MI_CHAT_ID = 123456789      # your numeric Telegram user ID; the bot ignores/blocks all other senders
 ```
+`database.py` falls back to localhost defaults if `config.py` is missing. Client deps on Arch: `python-pymysql` (driver), `mariadb-clients` (for the backup pull), plus the existing GUI stack; the bot machine also needs `python-pytelegrambotapi`.
 
 ## Architecture
 
-**Entry point (`main.py`)** builds a `CTkTabview` and instantiates one tab class per tab, all as siblings with no shared state or app-level context object — each tab is fully self-contained and opens its own SQLite connection per operation (no shared connection pool or ORM).
+**Entry point (`main.py`)** builds a `CTkTabview` and instantiates one tab class per tab, all as siblings with no shared state or app-level context object — each tab is fully self-contained and opens its own short-lived DB connection per operation via `database.conectar()` (no shared connection pool or ORM).
 
 **Tab switch → refresh dispatch**: `main.py`'s `orquestar_refrescos()` matches the active tab's display label to a hardcoded call into that tab's refresh method. **These method names are inconsistent by design of the original author** — when adding a new tab, add both the `CTkTabview.add(...)` label and a matching `elif` branch here:
 - Dashboard Financiero → `.actualizar()`
@@ -46,9 +55,15 @@ MI_CHAT_ID = 123456789   # your numeric Telegram user ID; the bot ignores/blocks
 - Auditoría Patrimonial → `.ejecutar_auditoria()`
 
 
-**Data layer (`database.py`)**: `init_db()` is the single source of truth for schema — `CREATE TABLE IF NOT EXISTS` for every table, called once at app startup. There are no migrations; schema changes mean editing this file directly (existing `data.db` files won't retroactively pick up new columns on tables that already exist — you'd need to drop/recreate or manually `ALTER TABLE`).
+**Data layer (`database.py`)**: `conectar()` is the single door to the database — it returns a thin proxy over a PyMySQL connection. The project's SQL keeps sqlite3-style `?` placeholders: the `_Cursor` proxy rewrites them to PyMySQL's `%s` on every execute (so **no SQL string may contain a literal `?` or `%`** — LIKE wildcards go in the parameter values, never inline) and, like sqlite3, `execute()` returns the cursor itself (there are chained `.execute(...).fetchone()` calls). `database.IntegrityError` / `database.MySQLError` are re-exported for except clauses. `init_db()` is the single source of truth for schema — `CREATE TABLE IF NOT EXISTS` for every table, called at app startup against the shared server.
 
-Every tab module (`tabs/*.py`) and `bot_listener.py` independently does `sqlite3.connect("data.db")` per read/write rather than importing shared connection logic from `database.py` — `database.py` is only used for initial schema creation. Follow this existing per-call-connection pattern when adding features to a tab rather than introducing a shared connection/session layer.
+MariaDB dialect conventions (keep these when writing new SQL):
+- The column `desc` (gastos/ingresos/deudas_msi) is a **reserved word in MariaDB** — always backtick bare references (`` `desc` ``); qualified `g.desc` also gets backticked for consistency.
+- Dates are ISO text (`YYYY-MM-DD`); period grouping/filtering uses string prefixes — `LEFT(fecha, 7)` for month, `LEFT(fecha, 4)` for year, `LEFT(fecha, 10)` for day (this replaced SQLite's `strftime`).
+- Upserts use `REPLACE INTO` (presupuestos, bot_estado, balance_general, entrenamiento_dias) and `INSERT IGNORE` (the two UNIQUE log tables) — not SQLite's `INSERT OR ...`/`ON CONFLICT`.
+- Money/aggregatable columns are `DOUBLE` (not DECIMAL/INT) so `SUM()`/`AVG()` come back to Python as float — PyMySQL returns `Decimal` for aggregates over INT columns, which breaks float math; keep new numeric columns DOUBLE if they'll be summed.
+
+Every tab module (`tabs/*.py`) and `bot_listener.py` independently calls `database.conectar()` per read/write (open → query/commit → close) rather than sharing a connection. Follow this existing per-call-connection pattern when adding features to a tab rather than introducing a shared connection/session layer.
 
 **Tables** (see `database.py` for authoritative schema):
 - `agenda` — dated events with a time (`hora`); `tareas` — dated to-dos with a `completada` checkbox flag (no time)
@@ -67,7 +82,7 @@ Every tab module (`tabs/*.py`) and `bot_listener.py` independently does `sqlite3
 
 Account balances have a single source: `database.obtener_saldos_cuentas()` → `(id, nombre, tipo, tasa_anual, saldo)` — Tesorería, Inicio, Auditoría, Planeación's debt planner and the bot all consume it; never re-embed the balance SQL. All destructive 🗑 actions across tabs ask `messagebox.askyesno` first — keep that invariant for new delete buttons. Treasury history lists support live search (`actualizar_historiales()` re-renders on KeyRelease, separate from the full `actualizar()`) and CSV export to `exportes/` (gitignored, utf-8-sig for Excel). Budget rows show compliance streaks (consecutive *closed* months within the current limit — limits have no history, so past months are judged against today's limits).
 
-`init_db()` also performs additive migrations (PRAGMA table_info + ALTER TABLE ADD COLUMN) for `gastos.tipo_deduccion`/`cuenta_id`, `ingresos.cuenta_id`, `deudas_msi.tasa_interes` and `cuentas.tasa_anual` — follow that pattern for future column additions since CREATE TABLE IF NOT EXISTS won't touch existing tables. It first calls `respaldar_db()`: one SQLite-backup-API copy per day into `backups/` (gitignored — real data), pruned to the 30 newest; the bot's vigilante also triggers it hourly (self-guarded by date).
+`init_db()` also performs additive migrations (`_columnas()` reads `information_schema.COLUMNS`, then `ALTER TABLE ADD COLUMN`) for `gastos.tipo_deduccion`/`cuenta_id`, `ingresos.cuenta_id`, `deudas_msi.tasa_interes` and `cuentas.tasa_anual` — follow that pattern for future column additions since CREATE TABLE IF NOT EXISTS won't touch existing tables. Backups are NOT done in-app anymore: they are hourly `mariadb-dump` gzips — `servidor/respaldo.sh` on the server plus `servidor/jalar_respaldo.sh` on each client (into the gitignored `backups/`), both driven by systemd user timers (`servidor/instalar_timers.sh`).
 
 **`CATEGORIA_AHORRO` convention** (defined in `database.py`): the "Ahorros" expense category is a wealth transfer, not consumption. All consumption analytics exclude it — dashboard flows/W(T)/VaR/PMC/forecast/Pareto/hormiga, the runway in impuestos, and the what-if simulator (both its totals and its category menu). Auditoría's conciliación deliberately does NOT exclude it (cash-basis: savings do move liquidity), and budgets keep it (pay-yourself-first commitment device). Preserve this split when adding new gasto-based queries.
 - `balance_general` — one row per month (`fecha` as `YYYY-MM` primary key) capturing `activos_liquidos`, `activos_fijos`, `pasivos_corto`, `pasivos_largo`; this is the source for the Auditoría tab's ratios
@@ -94,7 +109,8 @@ Treasury capture accepts an optional past date (`resolver_fecha()`: empty = toda
 
 ## Gotchas
 
-- `data.db` and `config.py` are gitignored; a fresh clone has neither. `main.py` will create an empty `data.db` on first run via `database.init_db()`, but expect an empty app until you either use the UI or run `generar_mock.py` for fake historical data.
-- `generar_mock.py` **drops** `ingresos`, `gastos`, and `deudas_msi` unconditionally before repopulating — never run it against real data you want to keep.
+- `config.py` is gitignored; a fresh clone needs it (copy `config.example.py`). `main.py` requires the MariaDB server to be reachable — otherwise it shows a connection-error dialog and exits. `init_db()` bootstraps the schema on an empty server, but expect an empty app until you migrate the legacy `data.db` (`migrar_a_mariadb.py`), capture data, or run `generar_mock.py`.
+- `generar_mock.py` **TRUNCATEs** `ingresos`, `gastos`, and `deudas_msi` unconditionally before repopulating — and now it does so on the SHARED server, so it nukes those tables for every machine. Never run it against real data you want to keep.
+- The legacy `data.db` (gitignored) may still sit in the repo root; nothing writes to it anymore. Don't delete it — it's the last-resort historical backup and the source for `migrar_a_mariadb.py`.
 - The `Auditorias/` directory is gitignored and appears to hold ad-hoc monthly exported reports; it is not read or written by any code in this repo.
 - This system needed the `noto-fonts-emoji` package installed (`sudo pacman -S noto-fonts-emoji && fc-cache -f`) for Tk to render emoji glyphs at all — without it every emoji shows as a tofu box. Separately, emoji typed with a trailing U+FE0F variation selector (e.g. copy-pasted "🏋️"/"🗑️") render as the emoji **plus** a stray tofu box for the selector itself on this font stack; strip the trailing `️` (use the bare codepoint, e.g. `"🏋"`/`"🗑"`) when adding new emoji to any tab.

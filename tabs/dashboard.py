@@ -1,5 +1,5 @@
 import customtkinter as ctk
-import sqlite3
+import database
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
@@ -44,16 +44,18 @@ class DashboardTab(ctk.CTkFrame):
         self.periodicidad = nueva_periodicidad
         self.actualizar()
 
-    def obtener_formato_sqlite(self):
-        if self.periodicidad == "Diario": return "%Y-%m-%d"
-        elif self.periodicidad == "Mensual": return "%Y-%m"
-        else: return "%Y"
+    def obtener_longitud_periodo(self):
+        """Las fechas son texto ISO 'YYYY-MM-DD': el periodo es su prefijo
+        (10 = día, 7 = mes, 4 = año) vía LEFT(fecha, n)."""
+        if self.periodicidad == "Diario": return 10
+        elif self.periodicidad == "Mensual": return 7
+        else: return 4
 
     def actualizar(self):
         for widget in self.canvas_frame.winfo_children(): widget.destroy()
 
-        formato_temporal = self.obtener_formato_sqlite()
-        conn = sqlite3.connect("data.db")
+        longitud_periodo = self.obtener_longitud_periodo()
+        conn = database.conectar()
         cursor = conn.cursor()
 
         # ========================================================
@@ -70,8 +72,8 @@ class DashboardTab(ctk.CTkFrame):
         color_flujo = "#10B981" if flujo_neto >= 0 else "#EF4444"
         self.lbl_flujo.configure(text=f"Flujo Total Neto: ${flujo_neto:,.2f}", text_color=color_flujo)
 
-        query_in = f"SELECT strftime('{formato_temporal}', fecha) as periodo, SUM(monto) FROM ingresos GROUP BY periodo ORDER BY periodo ASC"
-        query_out = f"SELECT strftime('{formato_temporal}', fecha) as periodo, SUM(monto) FROM gastos WHERE categoria != '{CATEGORIA_AHORRO}' GROUP BY periodo ORDER BY periodo ASC"
+        query_in = f"SELECT LEFT(fecha, {longitud_periodo}) as periodo, SUM(monto) FROM ingresos GROUP BY periodo ORDER BY periodo ASC"
+        query_out = f"SELECT LEFT(fecha, {longitud_periodo}) as periodo, SUM(monto) FROM gastos WHERE categoria != '{CATEGORIA_AHORRO}' GROUP BY periodo ORDER BY periodo ASC"
         
         datos_ingresos = dict(cursor.execute(query_in).fetchall())
         datos_gastos = dict(cursor.execute(query_out).fetchall())
@@ -194,7 +196,7 @@ class DashboardTab(ctk.CTkFrame):
 
         # --- [2,0] Value at Risk 95% del gasto (siempre mensual, independiente del selector) ---
         cursor.execute("""
-            SELECT strftime('%Y-%m', fecha) AS p, SUM(monto) FROM gastos
+            SELECT LEFT(fecha, 7) AS p, SUM(monto) FROM gastos
             WHERE categoria != ?
             GROUP BY p ORDER BY p ASC
         """, (CATEGORIA_AHORRO,))
@@ -217,9 +219,9 @@ class DashboardTab(ctk.CTkFrame):
             axs[2, 0].text(0.5, 0.5, 'Se requieren ≥2 meses de gasto', color='#94A3B8', ha='center', va='center')
 
         # --- [2,1] Propensión Marginal al Consumo y al Ahorro (PMC/PMA) ---
-        cursor.execute("SELECT strftime('%Y-%m', fecha) AS p, SUM(monto) FROM ingresos GROUP BY p")
+        cursor.execute("SELECT LEFT(fecha, 7) AS p, SUM(monto) FROM ingresos GROUP BY p")
         ing_mensual = dict(cursor.fetchall())
-        cursor.execute("SELECT strftime('%Y-%m', fecha) AS p, SUM(monto) FROM gastos WHERE categoria != ? GROUP BY p", (CATEGORIA_AHORRO,))
+        cursor.execute("SELECT LEFT(fecha, 7) AS p, SUM(monto) FROM gastos WHERE categoria != ? GROUP BY p", (CATEGORIA_AHORRO,))
         gas_mensual = dict(cursor.fetchall())
         meses_comunes = sorted(set(ing_mensual) & set(gas_mensual))[-13:]
         pmc_x, pmc_y = [], []
@@ -244,9 +246,9 @@ class DashboardTab(ctk.CTkFrame):
         # --- [2,2] Detector de Gasto Hormiga (anualizado) ---
         fecha_corte = (datetime.now() - timedelta(days=HORMIGA_VENTANA_DIAS)).strftime("%Y-%m-%d")
         cursor.execute("""
-            SELECT desc, COUNT(*), SUM(monto) FROM gastos
+            SELECT `desc`, COUNT(*), SUM(monto) FROM gastos
             WHERE fecha >= ? AND categoria != ?
-            GROUP BY LOWER(desc)
+            GROUP BY LOWER(`desc`)
             HAVING COUNT(*) >= ? AND AVG(monto) <= ?
             ORDER BY SUM(monto) DESC LIMIT 5
         """, (fecha_corte, CATEGORIA_AHORRO, HORMIGA_MIN_REPETICIONES, HORMIGA_MONTO_MAX))

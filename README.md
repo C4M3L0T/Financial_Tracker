@@ -2,7 +2,7 @@
 
 Una plataforma avanzada de ingeniería financiera personal que cierra la brecha entre el simple registro de datos y el modelado económico riguroso. Diseñada para operar en la intersección de las finanzas cuantitativas, el cálculo, la microeconomía y los principios de la contabilidad de partida doble.
 
-Este proyecto utiliza `customtkinter` para una interfaz gráfica de alto rendimiento, `sqlite3` para la persistencia analítica local, y el motor de `matplotlib` combinado con `numpy` para la renderización de modelos numéricos.
+Este proyecto utiliza `customtkinter` para una interfaz gráfica de alto rendimiento, un servidor **MariaDB compartido** para la persistencia (la app corre en varias computadoras contra la misma base), y el motor de `matplotlib` combinado con `numpy` para la renderización de modelos numéricos.
 
 ---
 
@@ -91,7 +91,26 @@ A continuación se detalla la fundamentación matemática, contable y microecon�
 
 ---
 
-## Novedades: Score de Salud, Regla 50/30/20 y Capturas Flexibles
+## Novedades: Base de datos compartida multi-equipo (MariaDB)
+
+La persistencia migró de un `data.db` SQLite local a un **servidor MariaDB en
+Docker** que vive en una máquina siempre encendida (hoy: una HP ZBook que
+también hace de servidor pihole). Con esto:
+
+- **La app corre en cualquier computadora** contra los mismos datos: basta
+  clonar el repo, instalar dependencias y apuntar `config.py` al servidor.
+- **El bot de Telegram corre en el servidor**, disponible 24/7 aunque el
+  escritorio esté apagado.
+- **La máquina servidor es desechable** (es prestada): dumps horarios locales
+  + copias horarias que cada cliente jala a su `backups/` por TCP. Reponer el
+  servidor en otra máquina toma ~15 minutos (Docker + restaurar dump).
+- `migrar_a_mariadb.py` copia una sola vez todos los datos del `data.db`
+  histórico al servidor, preservando ids; el archivo original queda intacto.
+
+Toda la operación (levantar servidor, conectar clientes, respaldos, migración
+de máquina) está documentada en **`servidor/README.md`**.
+
+## Novedades anteriores: Score de Salud, Regla 50/30/20 y Capturas Flexibles
 
 - **💚 Score de Salud Financiera 0-100** (banner en Inicio): índice ponderado de liquidez (razón circulante), apalancamiento, colchón (runway conservador), tasa de ahorro y cumplimiento de presupuestos, con desglose por componente y color semáforo.
 - **⚖ Regla 50/30/20** (en Inicio): clasifica tu gasto del mes en necesidades/deseos y calcula el ahorro como residuo del ingreso, comparando contra los ideales ≤50/≤30/≥20 con barras semáforo. Usa el mes con ingresos más reciente.
@@ -177,7 +196,7 @@ Ahora permite editar la fecha de ingresos y gastos ya capturados (útil para cor
 
 `bot_listener.py` recibe mensajes con el formato `monto categoría descripción [+f] [+d]` (atajos de categoría en `/help`, `+f` = con factura CFDI, `+d` = deducible) y los guarda en la misma base de datos. Usa la fecha real de envío del mensaje (no la fecha de proceso), así que si el bot estuvo caído, los gastos acumulados se registran con su fecha correcta al reconectar.
 
-Corre como servicio de usuario de **systemd** (`systemd/bot_listener.service`) con reinicio automático (`Restart=always`), para no depender de arrancarlo manualmente tras un corte de internet o un reinicio:
+Corre como servicio de usuario de **systemd** (`systemd/bot_listener.service`) con reinicio automático (`Restart=always`) **en la máquina servidor** (la misma que hospeda MariaDB — así sigue capturando aunque el escritorio esté apagado):
 
 ```bash
 systemctl --user status bot_listener.service
@@ -185,26 +204,39 @@ journalctl --user -u bot_listener.service -f
 systemctl --user restart bot_listener.service
 ```
 
+Solo debe correr en una máquina a la vez: dos procesos con el mismo token chocan en el polling de Telegram.
+
 ## Instalación y ejecución
 
-Requiere Python 3 y:
+En Arch Linux (para otra distro, los equivalentes de pip/paquetes):
 
 ```bash
-pip install customtkinter matplotlib numpy tkcalendar pyTelegramBotAPI
+sudo pacman -S --needed python-customtkinter python-matplotlib python-numpy \
+                        python-pymysql mariadb-clients noto-fonts-emoji
+# solo en la máquina que corre el bot:
+sudo pacman -S --needed python-pytelegrambotapi
 ```
 
-En Linux, además se necesita una fuente de emoji para que los íconos se rendericen correctamente (ej. en Arch: `sudo pacman -S noto-fonts-emoji && fc-cache -f`).
-
-```bash
-python main.py            # App de escritorio
-python bot_listener.py     # Bot de Telegram (o instalar el servicio systemd de arriba)
-```
-
-`config.py` (no versionado) debe definir tus credenciales del bot:
+Copia `config.example.py` a `config.py` (no versionado) y ajusta:
 
 ```python
-TELEGRAM_BOT_TOKEN = "..."
+DB_HOST = "192.168.1.50"   # IP del servidor MariaDB ("127.0.0.1" en el propio servidor)
+DB_PORT = 3306
+DB_USER = "arch"
+DB_PASSWORD = "..."         # = MARIADB_PASSWORD de servidor/.env
+DB_NAME = "arch_tracker"
+
+TELEGRAM_BOT_TOKEN = "..."  # solo necesarios donde corre el bot
 MI_CHAT_ID = 123456789
 ```
+
+```bash
+python main.py             # App de escritorio (requiere el servidor MariaDB accesible)
+python bot_listener.py     # Bot de Telegram (o instalar el servicio systemd de arriba)
+python migrar_a_mariadb.py # Una sola vez: copiar el data.db histórico al servidor
+```
+
+Cómo levantar el servidor MariaDB, los respaldos automáticos y la migración a
+otra máquina: **`servidor/README.md`**.
 
 No hay suite de pruebas ni build — la app se verifica corriéndola directamente.

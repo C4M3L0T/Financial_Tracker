@@ -17,5 +17,9 @@ venv/
 # Respaldos automáticos de la base de datos (datos reales)
 backups/
 
+# Servidor MariaDB: datos vivos del contenedor y dumps locales (datos reales)
+servidor/datos/
+servidor/respaldos/
+
 # Exportes CSV (datos reales)
 exportes/

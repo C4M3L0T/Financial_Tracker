@@ -17,10 +17,19 @@ class ArchProductivityApp(ctk.CTk):
         self.geometry("1300x900")
         self.minsize(1200, 800)
         
-        # Inicializar capa de datos unificada (respaldo diario + migraciones)
-        database.init_db()
-        # Materializar quincenas/renta/suscripciones vencidas antes de pintar
-        database.generar_recurrentes()
+        # Inicializar capa de datos unificada (esquema + migraciones en la
+        # MariaDB compartida) y materializar recurrentes antes de pintar
+        try:
+            database.init_db()
+            database.generar_recurrentes()
+        except database.MySQLError as e:
+            from tkinter import messagebox
+            messagebox.showerror(
+                "Sin conexión a la base de datos",
+                f"No se pudo conectar a MariaDB en {database.DB_HOST}:{database.DB_PORT}.\n\n{e}\n\n"
+                "Revisa que el servidor esté encendido y que config.py apunte "
+                "al host correcto (ver servidor/README.md).")
+            raise SystemExit(1)
 
         # Inicialización de la Vista de Pestañas (Tabs)
         self.tabview = ctk.CTkTabview(self)

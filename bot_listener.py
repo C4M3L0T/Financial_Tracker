@@ -1,4 +1,3 @@
-import sqlite3
 import telebot
 import config
 import database
@@ -12,7 +11,6 @@ from datetime import datetime
 # =========================================================
 BOT_TOKEN = config.TELEGRAM_BOT_TOKEN
 MI_TELEGRAM_ID = config.MI_CHAT_ID
-DB_PATH = "data.db"                    
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -40,12 +38,12 @@ CATEGORIAS = {
 
 def guardar_gasto_bd(desc, monto, categoria):
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = database.conectar()
         cursor = conn.cursor()
         fecha_hoy = datetime.now().strftime("%Y-%m-%d")
         
         cursor.execute("""
-            INSERT INTO gastos (desc, monto, categoria, fecha, con_factura, es_deducible)
+            INSERT INTO gastos (`desc`, monto, categoria, fecha, con_factura, es_deducible)
             VALUES (?, ?, ?, ?, 0, 0)
         """, (desc, monto, categoria, fecha_hoy))
         
@@ -61,7 +59,7 @@ def guardar_gasto_bd(desc, monto, categoria):
 # =========================================================
 def linea_presupuesto(categoria):
     """Estado del presupuesto de una categoría en el mes actual, o None si no hay límite."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = database.conectar()
     cursor = conn.cursor()
     cursor.execute("SELECT limite FROM presupuestos WHERE categoria=?", (categoria,))
     row = cursor.fetchone()
@@ -70,7 +68,7 @@ def linea_presupuesto(categoria):
         return None
     limite = row[0]
     mes = datetime.now().strftime("%Y-%m")
-    cursor.execute("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE categoria=? AND strftime('%Y-%m',fecha)=?",
+    cursor.execute("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE categoria=? AND LEFT(fecha, 7)=?",
                    (categoria, mes))
     gastado = cursor.fetchone()[0]
     conn.close()
@@ -82,17 +80,17 @@ def linea_presupuesto(categoria):
     return f"{icono} Presupuesto {categoria}: ${gastado:,.0f} / ${limite:,.0f} ({uso*100:.0f}%)"
 
 def construir_resumen():
-    conn = sqlite3.connect(DB_PATH)
+    conn = database.conectar()
     cursor = conn.cursor()
     mes = datetime.now().strftime("%Y-%m")
     cursor.execute("""
         SELECT p.categoria, p.limite,
                COALESCE((SELECT SUM(g.monto) FROM gastos g
-                         WHERE g.categoria = p.categoria AND strftime('%Y-%m', g.fecha) = ?), 0)
+                         WHERE g.categoria = p.categoria AND LEFT(g.fecha, 7) = ?), 0)
         FROM presupuestos p ORDER BY p.categoria
     """, (mes,))
     presupuestos = cursor.fetchall()
-    cursor.execute("SELECT desc, mensualidad, meses_totales, meses_pagados FROM deudas_msi")
+    cursor.execute("SELECT `desc`, mensualidad, meses_totales, meses_pagados FROM deudas_msi")
     deudas = cursor.fetchall()
     conn.close()
 
@@ -114,17 +112,17 @@ def construir_resumen():
 
 def construir_alertas():
     """Solo lo urgente: presupuestos ≥90% y deudas con 1 pago o menos por delante."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = database.conectar()
     cursor = conn.cursor()
     mes = datetime.now().strftime("%Y-%m")
     cursor.execute("""
         SELECT p.categoria, p.limite,
                COALESCE((SELECT SUM(g.monto) FROM gastos g
-                         WHERE g.categoria = p.categoria AND strftime('%Y-%m', g.fecha) = ?), 0)
+                         WHERE g.categoria = p.categoria AND LEFT(g.fecha, 7) = ?), 0)
         FROM presupuestos p
     """, (mes,))
     presupuestos = cursor.fetchall()
-    cursor.execute("SELECT desc, meses_totales - meses_pagados FROM deudas_msi WHERE meses_totales - meses_pagados <= 1")
+    cursor.execute("SELECT `desc`, meses_totales - meses_pagados FROM deudas_msi WHERE meses_totales - meses_pagados <= 1")
     deudas_por_vencer = cursor.fetchall()
     conn.close()
 
@@ -146,7 +144,7 @@ def resolver_cuenta(texto_busqueda):
     """Devuelve (id, nombre) de la cuenta que mejor coincida, o None.
     Prioridad: nombre exacto > prefijo > subcadena — así 'nu' resuelve a
     'Nu' y no a 'Cajitas Nu' por orden alfabético."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = database.conectar()
     cursor = conn.cursor()
     texto = texto_busqueda.lower()
     row = None
@@ -162,7 +160,7 @@ def cuenta_por_defecto():
     valor = obtener_estado("cuenta_default")
     if not valor:
         return None
-    conn = sqlite3.connect(DB_PATH)
+    conn = database.conectar()
     cursor = conn.cursor()
     cursor.execute("SELECT id, nombre FROM cuentas WHERE id=?", (valor,))
     row = cursor.fetchone()
@@ -170,31 +168,30 @@ def cuenta_por_defecto():
     return row  # None si la cuenta default fue eliminada desde la app
 
 def obtener_estado(clave):
-    conn = sqlite3.connect(DB_PATH)
+    conn = database.conectar()
     cursor = conn.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS bot_estado (clave TEXT PRIMARY KEY, valor TEXT)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS bot_estado (clave VARCHAR(64) PRIMARY KEY, valor TEXT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
     cursor.execute("SELECT valor FROM bot_estado WHERE clave=?", (clave,))
     row = cursor.fetchone()
     conn.close()
     return row[0] if row else None
 
 def guardar_estado(clave, valor):
-    conn = sqlite3.connect(DB_PATH)
+    conn = database.conectar()
     cursor = conn.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS bot_estado (clave TEXT PRIMARY KEY, valor TEXT)")
-    cursor.execute("INSERT OR REPLACE INTO bot_estado (clave, valor) VALUES (?, ?)", (clave, valor))
+    cursor.execute("CREATE TABLE IF NOT EXISTS bot_estado (clave VARCHAR(64) PRIMARY KEY, valor TEXT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+    cursor.execute("REPLACE INTO bot_estado (clave, valor) VALUES (?, ?)", (clave, valor))
     conn.commit()
     conn.close()
 
 def vigilante_diario():
-    """Cada hora: respaldo diario de la BD y materialización de recurrentes
-    (con aviso inmediato de lo generado). Además, una vez al día (después de
-    las 9:00) manda las alertas; la marca en bot_estado evita duplicados
-    aunque systemd reinicie el proceso varias veces al día."""
+    """Cada hora: materialización de recurrentes (con aviso inmediato de lo
+    generado). Además, una vez al día (después de las 9:00) manda las alertas;
+    la marca en bot_estado evita duplicados aunque systemd reinicie el proceso
+    varias veces al día. (Los respaldos ya no van aquí: son dumps del servidor
+    MariaDB — ver servidor/respaldo.sh y sus timers.)"""
     while True:
         try:
-            database.respaldar_db()
-
             generados = database.generar_recurrentes()
             if generados:
                 bot.send_message(MI_TELEGRAM_ID,
@@ -315,7 +312,7 @@ def transferir_bot(message):
         bot.reply_to(message, "❌ Origen y destino deben ser cuentas distintas.")
         return
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = database.conectar()
     conn.cursor().execute(
         "INSERT INTO transferencias (cuenta_origen, cuenta_destino, monto, fecha, descripcion) VALUES (?,?,?,?,?)",
         (origen[0], destino[0], monto, datetime.now().strftime("%Y-%m-%d"), "Pago desde Telegram"))
@@ -378,12 +375,12 @@ def procesar_gasto(message):
     
     # 2. Guardar en Base de Datos respetando la contabilidad mexicana
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = database.conectar()
         cursor = conn.cursor()
         fecha_envio = datetime.fromtimestamp(message.date).strftime("%Y-%m-%d")
 
         cursor.execute("""
-            INSERT INTO gastos (desc, monto, categoria, fecha, con_factura, es_deducible, cuenta_id)
+            INSERT INTO gastos (`desc`, monto, categoria, fecha, con_factura, es_deducible, cuenta_id)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (desc.strip(), monto, categoria_real, fecha_envio, con_factura, es_deducible,
               cuenta_sel[0] if cuenta_sel else None))

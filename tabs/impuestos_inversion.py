@@ -1,5 +1,5 @@
 import customtkinter as ctk
-import sqlite3
+import database
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -226,7 +226,7 @@ class ImpuestosInversionTab(ctk.CTkFrame):
         except ValueError:
             isr_retenido = 0.0
 
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
 
         # Solo el ejercicio fiscal en curso: la declaración anual es por año calendario
@@ -234,7 +234,7 @@ class ImpuestosInversionTab(ctk.CTkFrame):
         cursor.execute("""
             SELECT COALESCE(tipo_deduccion, 'Otro (tope general)'), SUM(monto)
             FROM gastos
-            WHERE es_deducible = 1 AND con_factura = 1 AND strftime('%Y', fecha) = ?
+            WHERE es_deducible = 1 AND con_factura = 1 AND LEFT(fecha, 4) = ?
             GROUP BY COALESCE(tipo_deduccion, 'Otro (tope general)')
         """, (anio_fiscal,))
         por_tipo = dict(cursor.fetchall())
@@ -266,11 +266,11 @@ class ImpuestosInversionTab(ctk.CTkFrame):
         marcadores = ",".join("?" * len(FUENTES_RESICO))
         cursor.execute(f"""
             SELECT COALESCE(SUM(monto), 0) FROM ingresos
-            WHERE fuente IN ({marcadores}) AND strftime('%Y', fecha) = ?
+            WHERE fuente IN ({marcadores}) AND LEFT(fecha, 4) = ?
         """, (*FUENTES_RESICO, anio_fiscal))
         ingreso_resico = cursor.fetchone()[0]
 
-        cursor.execute("SELECT fuente, COALESCE(SUM(monto),0) FROM ingresos WHERE strftime('%Y', fecha)=? GROUP BY fuente", (anio_fiscal,))
+        cursor.execute("SELECT fuente, COALESCE(SUM(monto),0) FROM ingresos WHERE LEFT(fecha, 4)=? GROUP BY fuente", (anio_fiscal,))
         ingresos_por_fuente = dict(cursor.fetchall())
 
         if ingreso_resico <= 0:
@@ -321,7 +321,7 @@ class ImpuestosInversionTab(ctk.CTkFrame):
         # Ordenar por el periodo agrupado: ORDER BY fecha en una query agrupada
         # toma una fecha arbitraria de cada grupo y puede traer meses equivocados
         cursor.execute("""
-            SELECT strftime('%Y-%m', fecha) AS periodo, SUM(monto) FROM gastos
+            SELECT LEFT(fecha, 7) AS periodo, SUM(monto) FROM gastos
             WHERE categoria != ?
             GROUP BY periodo
             ORDER BY periodo DESC LIMIT 6

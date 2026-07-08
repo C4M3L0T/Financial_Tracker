@@ -1,0 +1,26 @@
+# Servidor MariaDB de Arch Productivity Hub.
+# Diseñado para ser desechable: los datos viven en ./datos (bind mount) y en
+# los dumps horarios; levantar una máquina nueva = docker compose up + restaurar
+# el último dump (ver README.md).
+services:
+  mariadb:
+    image: mariadb:lts
+    container_name: arch_tracker_db
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: arch_tracker
+      MARIADB_USER: arch
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./datos:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

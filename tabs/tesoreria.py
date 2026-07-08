@@ -1,5 +1,5 @@
 import customtkinter as ctk
-import sqlite3
+import database
 from datetime import datetime
 from tkinter import messagebox
 
@@ -157,9 +157,9 @@ class TesoreriaTab(ctk.CTkFrame):
             return
         tipo_deduccion = self.c_tipo_deduccion.get() if self.var_deducible.get() == 1 else None
         cuenta_id = self.cuentas_map.get(self.c_gcuenta.get())
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute(
-            "INSERT INTO gastos (desc, monto, categoria, fecha, con_factura, es_deducible, tipo_deduccion, cuenta_id) VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO gastos (`desc`, monto, categoria, fecha, con_factura, es_deducible, tipo_deduccion, cuenta_id) VALUES (?,?,?,?,?,?,?,?)",
             (desc, monto_validado, self.c_gcat.get(), fecha, self.var_factura.get(), self.var_deducible.get(), tipo_deduccion, cuenta_id)
         )
         conn.commit()
@@ -174,7 +174,7 @@ class TesoreriaTab(ctk.CTkFrame):
         """Retroalimentación en el momento de captura: el punto de mayor
         apalancamiento conductual para frenar un sobregiro de presupuesto."""
         mes_actual = datetime.now().strftime("%Y-%m")
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         cursor.execute("SELECT limite FROM presupuestos WHERE categoria=?", (categoria,))
         row = cursor.fetchone()
@@ -182,7 +182,7 @@ class TesoreriaTab(ctk.CTkFrame):
             conn.close()
             return
         limite = row[0]
-        cursor.execute("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE categoria=? AND strftime('%Y-%m', fecha)=?",
+        cursor.execute("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE categoria=? AND LEFT(fecha, 7)=?",
                        (categoria, mes_actual))
         gastado = cursor.fetchone()[0]
         conn.close()
@@ -218,9 +218,9 @@ class TesoreriaTab(ctk.CTkFrame):
         if fecha is None:
             return
         cuenta_id = self.cuentas_map.get(self.c_icuenta.get())
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute(
-            "INSERT INTO ingresos (desc, monto, fuente, fecha, cuenta_id) VALUES (?,?,?,?,?)",
+            "INSERT INTO ingresos (`desc`, monto, fuente, fecha, cuenta_id) VALUES (?,?,?,?,?)",
             (desc, monto_validado, self.c_ifuen.get(), fecha, cuenta_id)
         )
         conn.commit()
@@ -233,7 +233,7 @@ class TesoreriaTab(ctk.CTkFrame):
     def eliminar_gasto(self, gid):
         if not messagebox.askyesno("Confirmar", "¿Eliminar este gasto?"):
             return
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute("DELETE FROM gastos WHERE id=?", (gid,))
         conn.commit()
         conn.close()
@@ -242,7 +242,7 @@ class TesoreriaTab(ctk.CTkFrame):
     def eliminar_ingreso(self, iid):
         if not messagebox.askyesno("Confirmar", "¿Eliminar este ingreso?"):
             return
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute("DELETE FROM ingresos WHERE id=?", (iid,))
         conn.commit()
         conn.close()
@@ -268,7 +268,7 @@ class TesoreriaTab(ctk.CTkFrame):
                 messagebox.showerror("Fecha Inválida", "Usa el formato YYYY-MM-DD (ej: 2026-07-06).")
                 return
 
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             conn.cursor().execute(f"UPDATE {tabla} SET fecha=? WHERE id=?", (nueva_fecha, registro_id))
             conn.commit()
             conn.close()
@@ -282,7 +282,6 @@ class TesoreriaTab(ctk.CTkFrame):
     # =========================================================
     def obtener_cuentas_con_saldo(self):
         """Delegado a database.obtener_saldos_cuentas() (fuente única de saldos)."""
-        import database
         return [(cid, nombre, tipo, saldo)
                 for cid, nombre, tipo, _tasa, saldo in database.obtener_saldos_cuentas()]
 
@@ -371,7 +370,7 @@ class TesoreriaTab(ctk.CTkFrame):
                 messagebox.showerror("Error", "El monto debe ser un número mayor a cero.", parent=dialog)
                 return
 
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             conn.cursor().execute(
                 "INSERT INTO transferencias (cuenta_origen, cuenta_destino, monto, fecha, descripcion) VALUES (?,?,?,?,?)",
                 (ids_por_nombre[origen], ids_por_nombre[destino], monto,
@@ -392,7 +391,7 @@ class TesoreriaTab(ctk.CTkFrame):
 
         def refrescar_transferencias():
             for w in lista_tr.winfo_children(): w.destroy()
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT t.id, co.nombre, cd.nombre, t.monto, t.fecha
@@ -414,7 +413,7 @@ class TesoreriaTab(ctk.CTkFrame):
         def borrar_transferencia(tid):
             if not messagebox.askyesno("Confirmar", "¿Deshacer esta transferencia?", parent=dialog):
                 return
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             conn.cursor().execute("DELETE FROM transferencias WHERE id=?", (tid,))
             conn.commit()
             conn.close()
@@ -426,8 +425,6 @@ class TesoreriaTab(ctk.CTkFrame):
     def abrir_recurrentes(self):
         """Plantillas que se materializan solas cada mes (quincenas, renta,
         suscripciones): eliminan la captura manual repetitiva."""
-        import database
-
         dialog = ctk.CTkToplevel(self)
         dialog.title("Movimientos Recurrentes")
         dialog.geometry("520x560")
@@ -467,7 +464,7 @@ class TesoreriaTab(ctk.CTkFrame):
 
         def refrescar_lista():
             for w in lista.winfo_children(): w.destroy()
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT r.id, r.tipo, r.descripcion, r.monto, r.categoria, r.dia_mes, r.activo, c.nombre
@@ -506,7 +503,7 @@ class TesoreriaTab(ctk.CTkFrame):
                 return
             tipo = "ingreso" if var_tipo.get() == "Ingreso" else "gasto"
             cuenta_id = self.cuentas_map.get(c_cuenta.get())
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             conn.cursor().execute("""
                 INSERT INTO recurrentes (tipo, descripcion, monto, categoria, dia_mes, cuenta_id, activo)
                 VALUES (?,?,?,?,?,?,1)
@@ -520,7 +517,7 @@ class TesoreriaTab(ctk.CTkFrame):
             self.actualizar()
 
         def editar(rid):
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             fila = conn.cursor().execute("SELECT descripcion, monto, dia_mes FROM recurrentes WHERE id=?", (rid,)).fetchone()
             conn.close()
             if not fila:
@@ -556,7 +553,7 @@ class TesoreriaTab(ctk.CTkFrame):
                 if not desc_n:
                     messagebox.showerror("Error", "Ponle descripción.", parent=d2)
                     return
-                conn = sqlite3.connect("data.db")
+                conn = database.conectar()
                 conn.cursor().execute("UPDATE recurrentes SET descripcion=?, monto=?, dia_mes=? WHERE id=?",
                                       (desc_n, monto_n, dia_n, rid))
                 conn.commit()
@@ -570,14 +567,14 @@ class TesoreriaTab(ctk.CTkFrame):
         def eliminar(rid):
             if not messagebox.askyesno("Confirmar", "¿Eliminar esta plantilla recurrente?\n(Los movimientos ya generados se conservan)", parent=dialog):
                 return
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             conn.cursor().execute("DELETE FROM recurrentes WHERE id=?", (rid,))
             conn.commit()
             conn.close()
             refrescar_lista()
 
         def alternar(rid, var):
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             conn.cursor().execute("UPDATE recurrentes SET activo=? WHERE id=?", (var.get(), rid))
             conn.commit()
             conn.close()
@@ -611,7 +608,7 @@ class TesoreriaTab(ctk.CTkFrame):
                               command=lambda i=cid: editar(i)).pack(side="right")
 
         def editar(cuenta_id):
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             fila = conn.cursor().execute(
                 "SELECT nombre, tipo, saldo_inicial, COALESCE(tasa_anual, 0) FROM cuentas WHERE id=?",
                 (cuenta_id,)).fetchone()
@@ -652,13 +649,13 @@ class TesoreriaTab(ctk.CTkFrame):
                 if not nombre_nuevo:
                     messagebox.showerror("Error", "El nombre no puede quedar vacío.", parent=d2)
                     return
-                conn = sqlite3.connect("data.db")
+                conn = database.conectar()
                 try:
                     conn.cursor().execute(
                         "UPDATE cuentas SET nombre=?, tipo=?, saldo_inicial=?, tasa_anual=? WHERE id=?",
                         (nombre_nuevo, c_tip.get(), saldo_ini, tasa, cuenta_id))
                     conn.commit()
-                except sqlite3.IntegrityError:
+                except database.IntegrityError:
                     messagebox.showerror("Error", "Ya existe otra cuenta con ese nombre.", parent=d2)
                     return
                 finally:
@@ -674,7 +671,7 @@ class TesoreriaTab(ctk.CTkFrame):
             if not messagebox.askyesno("Confirmar", "¿Eliminar esta cuenta?\nSus movimientos se conservan pero quedan sin cuenta asignada.", parent=dialog):
                 return
             # Los movimientos históricos se conservan; solo pierden la asignación
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             cur = conn.cursor()
             cur.execute("UPDATE gastos SET cuenta_id=NULL WHERE cuenta_id=?", (cuenta_id,))
             cur.execute("UPDATE ingresos SET cuenta_id=NULL WHERE cuenta_id=?", (cuenta_id,))
@@ -703,13 +700,13 @@ class TesoreriaTab(ctk.CTkFrame):
             if not nombre:
                 messagebox.showerror("Error", "Ponle nombre a la cuenta.", parent=dialog)
                 return
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             try:
                 conn.cursor().execute(
                     "INSERT INTO cuentas (nombre, tipo, saldo_inicial, fecha_inicial) VALUES (?,?,?,?)",
                     (nombre, c_tipo.get(), saldo_inicial, datetime.now().strftime("%Y-%m-%d")))
                 conn.commit()
-            except sqlite3.IntegrityError:
+            except database.IntegrityError:
                 messagebox.showerror("Error", "Ya existe una cuenta con ese nombre.", parent=dialog)
             finally:
                 conn.close()
@@ -732,16 +729,16 @@ class TesoreriaTab(ctk.CTkFrame):
         ruta_gastos = os.path.join("exportes", f"gastos_{marca}.csv")
         ruta_ingresos = os.path.join("exportes", f"ingresos_{marca}.csv")
 
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT g.id, g.fecha, g.desc, g.monto, g.categoria, g.con_factura,
+            SELECT g.id, g.fecha, g.`desc`, g.monto, g.categoria, g.con_factura,
                    g.es_deducible, COALESCE(g.tipo_deduccion, ''), COALESCE(c.nombre, '')
             FROM gastos g LEFT JOIN cuentas c ON c.id = g.cuenta_id ORDER BY g.fecha, g.id
         """)
         gastos = cursor.fetchall()
         cursor.execute("""
-            SELECT i.id, i.fecha, i.desc, i.monto, i.fuente, COALESCE(c.nombre, '')
+            SELECT i.id, i.fecha, i.`desc`, i.monto, i.fuente, COALESCE(c.nombre, '')
             FROM ingresos i LEFT JOIN cuentas c ON c.id = i.cuenta_id ORDER BY i.fecha, i.id
         """)
         ingresos = cursor.fetchall()
@@ -764,16 +761,16 @@ class TesoreriaTab(ctk.CTkFrame):
         for w in self.frame_historial_gastos.winfo_children(): w.destroy()
         for w in self.frame_historial_ingresos.winfo_children(): w.destroy()
 
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
 
         filtro_g = self.e_buscar_g.get().strip()
         if filtro_g:
             like = f"%{filtro_g}%"
-            cursor.execute("""SELECT id, desc, monto, categoria, fecha FROM gastos
-                              WHERE desc LIKE ? OR categoria LIKE ? ORDER BY id DESC LIMIT 30""", (like, like))
+            cursor.execute("""SELECT id, `desc`, monto, categoria, fecha FROM gastos
+                              WHERE `desc` LIKE ? OR categoria LIKE ? ORDER BY id DESC LIMIT 30""", (like, like))
         else:
-            cursor.execute("SELECT id, desc, monto, categoria, fecha FROM gastos ORDER BY id DESC LIMIT 20")
+            cursor.execute("SELECT id, `desc`, monto, categoria, fecha FROM gastos ORDER BY id DESC LIMIT 20")
         for gid, d, m, c, fe in cursor.fetchall():
             row = ctk.CTkFrame(self.frame_historial_gastos, fg_color="transparent")
             row.pack(fill="x", pady=2)
@@ -784,10 +781,10 @@ class TesoreriaTab(ctk.CTkFrame):
         filtro_i = self.e_buscar_i.get().strip()
         if filtro_i:
             like = f"%{filtro_i}%"
-            cursor.execute("""SELECT id, desc, monto, fuente, fecha FROM ingresos
-                              WHERE desc LIKE ? OR fuente LIKE ? ORDER BY id DESC LIMIT 30""", (like, like))
+            cursor.execute("""SELECT id, `desc`, monto, fuente, fecha FROM ingresos
+                              WHERE `desc` LIKE ? OR fuente LIKE ? ORDER BY id DESC LIMIT 30""", (like, like))
         else:
-            cursor.execute("SELECT id, desc, monto, fuente, fecha FROM ingresos ORDER BY id DESC LIMIT 20")
+            cursor.execute("SELECT id, `desc`, monto, fuente, fecha FROM ingresos ORDER BY id DESC LIMIT 20")
         for iid, d, m, f, fe in cursor.fetchall():
             row = ctk.CTkFrame(self.frame_historial_ingresos, fg_color="transparent")
             row.pack(fill="x", pady=2)

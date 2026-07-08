@@ -1,5 +1,5 @@
 import customtkinter as ctk
-import sqlite3
+import database
 import datetime
 
 class AuditoriaTab(ctk.CTkFrame):
@@ -74,7 +74,7 @@ class AuditoriaTab(ctk.CTkFrame):
 
     def ejecutar_auditoria(self):
         mes_actual = datetime.datetime.now().strftime("%Y-%m")
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
 
         # Usar el balance más reciente disponible: exigir exactamente el mes en
@@ -101,12 +101,12 @@ class AuditoriaTab(ctk.CTkFrame):
             fecha_prev, act_l_prev = filas[1][0], filas[1][1]
             cursor.execute("""
                 SELECT COALESCE(SUM(monto), 0) FROM ingresos
-                WHERE strftime('%Y-%m', fecha) > ? AND strftime('%Y-%m', fecha) <= ?
+                WHERE LEFT(fecha, 7) > ? AND LEFT(fecha, 7) <= ?
             """, (fecha_prev, fecha_mes))
             ingresos_periodo = cursor.fetchone()[0]
             cursor.execute("""
                 SELECT COALESCE(SUM(monto), 0) FROM gastos
-                WHERE strftime('%Y-%m', fecha) > ? AND strftime('%Y-%m', fecha) <= ?
+                WHERE LEFT(fecha, 7) > ? AND LEFT(fecha, 7) <= ?
             """, (fecha_prev, fecha_mes))
             gastos_periodo = cursor.fetchone()[0]
             # Pagos netos a tarjetas: dinero que salió de la liquidez sin ser gasto
@@ -119,7 +119,7 @@ class AuditoriaTab(ctk.CTkFrame):
                 FROM transferencias t
                 LEFT JOIN cuentas co ON co.id = t.cuenta_origen
                 LEFT JOIN cuentas cd ON cd.id = t.cuenta_destino
-                WHERE strftime('%Y-%m', t.fecha) > ? AND strftime('%Y-%m', t.fecha) <= ?
+                WHERE LEFT(t.fecha, 7) > ? AND LEFT(t.fecha, 7) <= ?
             """, (fecha_prev, fecha_mes))
             pagos_tarjeta_netos = cursor.fetchone()[0]
             conciliacion = {
@@ -133,7 +133,6 @@ class AuditoriaTab(ctk.CTkFrame):
         conn.close()
 
         # Liquidez según cuentas reales (excluye crédito: eso es pasivo, no activo)
-        import database
         no_credito = [s for _c, _n, tipo, _t, s in database.obtener_saldos_cuentas() if tipo != "Crédito"]
         liquidez_cuentas, num_cuentas = sum(no_credito), len(no_credito)
 

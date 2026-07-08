@@ -1,5 +1,5 @@
 import customtkinter as ctk
-import sqlite3
+import database
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from datetime import datetime
@@ -87,7 +87,6 @@ class BalanceGeneralTab(ctk.CTkFrame):
     def usar_saldos_cuentas(self):
         """Prellena activos líquidos y deuda de tarjetas desde los saldos derivados
         de las cuentas — la conciliación cuadra por construcción."""
-        import database
         from tkinter import messagebox
         filas = database.obtener_saldos_cuentas()
         if not filas:
@@ -105,7 +104,7 @@ class BalanceGeneralTab(ctk.CTkFrame):
     def cargar_mes_actual(self):
         """Lee el registro del mes en curso si ya existe"""
         fecha_mes = datetime.now().strftime("%Y-%m")
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         cursor.execute("SELECT activos_liquidos, activos_fijos, pasivos_corto, pasivos_largo FROM balance_general WHERE fecha = ?", (fecha_mes,))
         row = cursor.fetchone()
@@ -128,16 +127,11 @@ class BalanceGeneralTab(ctk.CTkFrame):
         except ValueError:
             return
 
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO balance_general (fecha, activos_liquidos, activos_fijos, pasivos_corto, pasivos_largo)
+            REPLACE INTO balance_general (fecha, activos_liquidos, activos_fijos, pasivos_corto, pasivos_largo)
             VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(fecha) DO UPDATE SET
-                activos_liquidos=excluded.activos_liquidos,
-                activos_fijos=excluded.activos_fijos,
-                pasivos_corto=excluded.pasivos_corto,
-                pasivos_largo=excluded.pasivos_largo
         """, (fecha_mes, act_l, act_f, pas_c, pas_l))
         conn.commit()
         conn.close()

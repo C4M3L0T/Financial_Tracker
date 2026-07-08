@@ -1,5 +1,5 @@
 import customtkinter as ctk
-import sqlite3
+import database
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -189,7 +189,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
         return info[1], info[2], info[3]
 
     def calcular_xp_total(self):
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
 
         cursor.execute("SELECT id, dia_tipo FROM entrenamiento_ejercicios")
@@ -242,7 +242,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
         return int(xp)
 
     def calcular_brillo_musculos(self):
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
 
         cursor.execute("""
@@ -372,7 +372,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
             text=f"Semana del {fechas_semana[0].strftime('%d/%m')} al {fechas_semana[6].strftime('%d/%m/%Y')}"
         )
 
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
 
         cursor.execute("SELECT dia_semana, dia_tipo FROM entrenamiento_dias")
@@ -552,7 +552,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
         nombre = entry_widget.get().strip()
         if not nombre:
             return
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute("INSERT INTO entrenamiento_ejercicios (dia_tipo, nombre) VALUES (?, ?)", (dia_tipo, nombre))
         conn.commit()
         conn.close()
@@ -564,7 +564,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
             if not nuevo_nombre:
                 messagebox.showerror("Error", "El nombre no puede estar vacío.")
                 return False
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             conn.cursor().execute("UPDATE entrenamiento_ejercicios SET nombre=? WHERE id=?", (nuevo_nombre, ejercicio_id))
             conn.commit()
             conn.close()
@@ -576,7 +576,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
     def eliminar_ejercicio(self, ejercicio_id):
         if not messagebox.askyesno("Confirmar", "¿Eliminar este ejercicio y todo su historial?"):
             return
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM entrenamiento_ejercicios WHERE id=?", (ejercicio_id,))
         cursor.execute("DELETE FROM entrenamiento_log WHERE ejercicio_id=?", (ejercicio_id,))
@@ -585,10 +585,10 @@ class HabitosAgendaTab(ctk.CTkFrame):
         self.actualizar()
 
     def alternar_ejercicio(self, ejercicio_id, var_estado, semana_iso):
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         if var_estado.get() == 1:
-            cursor.execute("INSERT OR IGNORE INTO entrenamiento_log (ejercicio_id, semana, fecha) VALUES (?, ?, ?)",
+            cursor.execute("INSERT IGNORE INTO entrenamiento_log (ejercicio_id, semana, fecha) VALUES (?, ?, ?)",
                            (ejercicio_id, semana_iso, date.today().strftime("%Y-%m-%d")))
         else:
             cursor.execute("DELETE FROM entrenamiento_log WHERE ejercicio_id=? AND semana=?", (ejercicio_id, semana_iso))
@@ -597,7 +597,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
         self.actualizar()
 
     def abrir_dialogo_tipo_dia(self, dia_semana, tipo_actual):
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         cursor.execute("SELECT DISTINCT dia_tipo FROM entrenamiento_ejercicios")
         tipos_existentes = [row[0] for row in cursor.fetchall()]
@@ -620,10 +620,9 @@ class HabitosAgendaTab(ctk.CTkFrame):
 
         def guardar():
             nuevo_tipo = entry_nuevo.get().strip() or var_tipo.get()
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             conn.cursor().execute("""
-                INSERT INTO entrenamiento_dias (dia_semana, dia_tipo) VALUES (?, ?)
-                ON CONFLICT(dia_semana) DO UPDATE SET dia_tipo=excluded.dia_tipo
+                REPLACE INTO entrenamiento_dias (dia_semana, dia_tipo) VALUES (?, ?)
             """, (dia_semana, nuevo_tipo))
             conn.commit()
             conn.close()
@@ -655,7 +654,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
                 messagebox.showerror("Distancia Inválida", "Ingresa un número positivo de metros.")
                 return
 
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             conn.cursor().execute("INSERT INTO natacion_log (semana, fecha, distancia_m) VALUES (?, ?, ?)",
                                   (semana_iso, fecha_str, distancia))
             conn.commit()
@@ -669,7 +668,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
     def eliminar_sesion_natacion(self, sesion_id):
         if not messagebox.askyesno("Confirmar", "¿Eliminar esta sesión de natación?"):
             return
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute("DELETE FROM natacion_log WHERE id=?", (sesion_id,))
         conn.commit()
         conn.close()
@@ -679,7 +678,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
     # ACCIONES: HÁBITOS PERSONALIZADOS
     # =========================================================
     def abrir_dialogo_habito_custom(self, habito_id):
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         nombre_actual, categoria_actual, dias_actuales = "", "", []
         if habito_id is not None:
@@ -723,7 +722,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
                 return
             dias_str = ",".join(dias_sel)
 
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             cursor = conn.cursor()
             if habito_id is None:
                 cursor.execute("INSERT INTO habitos_custom (nombre, dias_semana, categoria) VALUES (?, ?, ?)",
@@ -743,7 +742,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
     def eliminar_habito_custom(self, habito_id):
         if not messagebox.askyesno("Confirmar", "¿Eliminar este hábito y todo su historial?"):
             return
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM habitos_custom WHERE id=?", (habito_id,))
         cursor.execute("DELETE FROM habitos_custom_log WHERE habito_id=?", (habito_id,))
@@ -752,10 +751,10 @@ class HabitosAgendaTab(ctk.CTkFrame):
         self.actualizar()
 
     def alternar_habito_custom(self, habito_id, var_estado, fecha_str):
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         if var_estado.get() == 1:
-            cursor.execute("INSERT OR IGNORE INTO habitos_custom_log (habito_id, fecha) VALUES (?, ?)", (habito_id, fecha_str))
+            cursor.execute("INSERT IGNORE INTO habitos_custom_log (habito_id, fecha) VALUES (?, ?)", (habito_id, fecha_str))
         else:
             cursor.execute("DELETE FROM habitos_custom_log WHERE habito_id=? AND fecha=?", (habito_id, fecha_str))
         conn.commit()
@@ -769,7 +768,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
         desc = entry_widget.get().strip()
         if not desc:
             return
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute("INSERT INTO tareas (descripcion, fecha, completada) VALUES (?, ?, 0)", (desc, fecha_str))
         conn.commit()
         conn.close()
@@ -781,7 +780,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
             if not desc:
                 messagebox.showerror("Error", "La descripción no puede estar vacía.")
                 return False
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             conn.cursor().execute("UPDATE tareas SET descripcion=? WHERE id=?", (desc, tarea_id))
             conn.commit()
             conn.close()
@@ -791,7 +790,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
         self.abrir_dialogo_input("Editar Tarea", [("descripcion", "Descripción:", desc_actual)], guardar)
 
     def alternar_tarea(self, tarea_id, var_estado):
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute("UPDATE tareas SET completada=? WHERE id=?", (var_estado.get(), tarea_id))
         conn.commit()
         conn.close()
@@ -799,7 +798,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
     def eliminar_tarea(self, tarea_id):
         if not messagebox.askyesno("Confirmar", "¿Eliminar esta tarea?"):
             return
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute("DELETE FROM tareas WHERE id=?", (tarea_id,))
         conn.commit()
         conn.close()
@@ -813,7 +812,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
         hora = entry_hora.get().strip()
         if not desc or not hora:
             return
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute("INSERT INTO agenda (tarea, fecha, hora) VALUES (?, ?, ?)", (desc, fecha_str, hora))
         conn.commit()
         conn.close()
@@ -825,7 +824,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
             if not desc or not hora:
                 messagebox.showerror("Error", "Descripción y hora son obligatorias.")
                 return False
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             conn.cursor().execute("UPDATE agenda SET tarea=?, hora=? WHERE id=?", (desc, hora, evento_id))
             conn.commit()
             conn.close()
@@ -838,7 +837,7 @@ class HabitosAgendaTab(ctk.CTkFrame):
     def eliminar_evento(self, evento_id):
         if not messagebox.askyesno("Confirmar", "¿Eliminar este evento?"):
             return
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute("DELETE FROM agenda WHERE id=?", (evento_id,))
         conn.commit()
         conn.close()

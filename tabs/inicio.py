@@ -1,5 +1,5 @@
 import customtkinter as ctk
-import sqlite3
+import database
 import numpy as np
 from datetime import datetime
 from database import CATEGORIA_AHORRO, CATEGORIAS_NECESIDAD
@@ -105,11 +105,10 @@ class InicioTab(ctk.CTkFrame):
     def actualizar(self):
         hoy_str = datetime.now().strftime("%Y-%m-%d")
         mes_actual = datetime.now().strftime("%Y-%m")
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
 
         # --- Tarjeta 1: neto en cuentas (líquido − tarjetas) ---
-        import database
         saldos = [(tipo, saldo) for _cid, _n, tipo, _t, saldo in database.obtener_saldos_cuentas()]
         if saldos:
             liquido = sum(s for tipo, s in saldos if tipo != "Crédito")
@@ -123,7 +122,7 @@ class InicioTab(ctk.CTkFrame):
             self.card_neto[1].configure(text="crea tus cuentas en Tesorería")
 
         # --- Tarjeta 2: consumo del mes vs presupuesto total ---
-        cursor.execute("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE strftime('%Y-%m', fecha)=? AND categoria != ?",
+        cursor.execute("SELECT COALESCE(SUM(monto),0) FROM gastos WHERE LEFT(fecha, 7)=? AND categoria != ?",
                        (mes_actual, CATEGORIA_AHORRO))
         consumo_mes = cursor.fetchone()[0]
         cursor.execute("SELECT COALESCE(SUM(limite),0) FROM presupuestos WHERE categoria != ?", (CATEGORIA_AHORRO,))
@@ -147,7 +146,7 @@ class InicioTab(ctk.CTkFrame):
         # --- Tarjeta 4: runway conservador (liquidez / gasto adverso VaR95) ---
         cursor.execute("""
             SELECT SUM(monto) FROM gastos WHERE categoria != ?
-            GROUP BY strftime('%Y-%m', fecha) ORDER BY strftime('%Y-%m', fecha)
+            GROUP BY LEFT(fecha, 7) ORDER BY LEFT(fecha, 7)
         """, (CATEGORIA_AHORRO,))
         serie = [r[0] for r in cursor.fetchall()]
         liquido_total = sum(s for tipo, s in saldos if tipo != "Crédito") if saldos else 0.0
@@ -166,11 +165,11 @@ class InicioTab(ctk.CTkFrame):
         # --- Regla 50/30/20: mes con ingresos más reciente ---
         for w in self.lista_regla.winfo_children(): w.destroy()
         mes_regla = mes_actual
-        cursor.execute("SELECT COALESCE(SUM(monto),0) FROM ingresos WHERE strftime('%Y-%m', fecha)=?", (mes_regla,))
+        cursor.execute("SELECT COALESCE(SUM(monto),0) FROM ingresos WHERE LEFT(fecha, 7)=?", (mes_regla,))
         ingreso_regla = cursor.fetchone()[0]
         if ingreso_regla <= 0:
             mes_regla = mes_previo(mes_actual)
-            cursor.execute("SELECT COALESCE(SUM(monto),0) FROM ingresos WHERE strftime('%Y-%m', fecha)=?", (mes_regla,))
+            cursor.execute("SELECT COALESCE(SUM(monto),0) FROM ingresos WHERE LEFT(fecha, 7)=?", (mes_regla,))
             ingreso_regla = cursor.fetchone()[0]
 
         if ingreso_regla <= 0:
@@ -180,11 +179,11 @@ class InicioTab(ctk.CTkFrame):
         else:
             marcadores = ",".join("?" * len(CATEGORIAS_NECESIDAD))
             cursor.execute(f"""SELECT COALESCE(SUM(monto),0) FROM gastos
-                               WHERE strftime('%Y-%m', fecha)=? AND categoria IN ({marcadores})""",
+                               WHERE LEFT(fecha, 7)=? AND categoria IN ({marcadores})""",
                            (mes_regla, *CATEGORIAS_NECESIDAD))
             necesidades = cursor.fetchone()[0]
             cursor.execute(f"""SELECT COALESCE(SUM(monto),0) FROM gastos
-                               WHERE strftime('%Y-%m', fecha)=? AND categoria NOT IN ({marcadores}) AND categoria != ?""",
+                               WHERE LEFT(fecha, 7)=? AND categoria NOT IN ({marcadores}) AND categoria != ?""",
                            (mes_regla, *CATEGORIAS_NECESIDAD, CATEGORIA_AHORRO))
             deseos = cursor.fetchone()[0]
             ahorro_monto = ingreso_regla - necesidades - deseos
@@ -235,13 +234,13 @@ class InicioTab(ctk.CTkFrame):
         if ingreso_regla > 0:
             componentes["Ahorro"] = max(0.0, min(pct_a / 20.0, 1.0)) * 100  # 20% = pleno
 
-        cursor.execute("SELECT MIN(strftime('%Y-%m', fecha)) FROM gastos")
+        cursor.execute("SELECT MIN(LEFT(fecha, 7)) FROM gastos")
         primer_mes = cursor.fetchone()[0]
         mes_pasado_str = mes_previo(mes_actual)
         cursor.execute("""
             SELECT p.limite,
                    COALESCE((SELECT SUM(g.monto) FROM gastos g
-                             WHERE g.categoria = p.categoria AND strftime('%Y-%m', g.fecha) = ?), 0)
+                             WHERE g.categoria = p.categoria AND LEFT(g.fecha, 7) = ?), 0)
             FROM presupuestos p WHERE p.limite > 0
         """, (mes_pasado_str,))
         pres_pasado = cursor.fetchall()
@@ -267,7 +266,7 @@ class InicioTab(ctk.CTkFrame):
         cursor.execute("""
             SELECT p.categoria, p.limite,
                    COALESCE((SELECT SUM(g.monto) FROM gastos g
-                             WHERE g.categoria = p.categoria AND strftime('%Y-%m', g.fecha) = ?), 0)
+                             WHERE g.categoria = p.categoria AND LEFT(g.fecha, 7) = ?), 0)
             FROM presupuestos p
         """, (mes_actual,))
         for cat, limite, gastado in cursor.fetchall():
@@ -276,7 +275,7 @@ class InicioTab(ctk.CTkFrame):
                 avisos.append((icono, f"{cat}: ${gastado:,.0f} de ${limite:,.0f} ({gastado/limite*100:.0f}%)",
                                "#EF4444" if gastado > limite else "#F59E0B"))
 
-        cursor.execute("SELECT desc FROM deudas_msi WHERE meses_totales - meses_pagados = 1")
+        cursor.execute("SELECT `desc` FROM deudas_msi WHERE meses_totales - meses_pagados = 1")
         for (desc,) in cursor.fetchall():
             avisos.append(("🎉", f"'{desc}': último pago este mes — tu liquidez sube pronto", "#10B981"))
 

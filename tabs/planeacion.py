@@ -1,5 +1,5 @@
 import customtkinter as ctk
-import sqlite3
+import database
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
@@ -216,7 +216,7 @@ class PlaneacionTab(ctk.CTkFrame):
 
     # --- Lógica de Base de Datos y MSI ---
     def actualizar_categorias(self):
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         cursor.execute("SELECT DISTINCT categoria FROM gastos")
         cats_db = [row[0] for row in cursor.fetchall()]
@@ -247,9 +247,9 @@ class PlaneacionTab(ctk.CTkFrame):
         else:
             mensualidad = monto_total / meses_totales
 
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute("""
-            INSERT INTO deudas_msi (desc, monto_total, mensualidad, meses_totales, meses_pagados, tasa_interes)
+            INSERT INTO deudas_msi (`desc`, monto_total, mensualidad, meses_totales, meses_pagados, tasa_interes)
             VALUES (?,?,?,?,0,?)
         """, (desc, monto_total, mensualidad, meses_totales, tasa_anual))
         conn.commit()
@@ -262,7 +262,7 @@ class PlaneacionTab(ctk.CTkFrame):
         self.actualizar_msi()
 
     def abonar_msi(self, msi_id, pagados_actuales, totales):
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         nuevo_pago = pagados_actuales + 1
         
@@ -279,7 +279,7 @@ class PlaneacionTab(ctk.CTkFrame):
     def eliminar_msi(self, msi_id):
         if not messagebox.askyesno("Confirmar", "¿Eliminar esta deuda y su progreso de pagos?"):
             return
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute("DELETE FROM deudas_msi WHERE id=?", (msi_id,))
         conn.commit()
         conn.close()
@@ -288,9 +288,9 @@ class PlaneacionTab(ctk.CTkFrame):
     def actualizar_msi(self):
         for w in self.lista_msi.winfo_children(): w.destroy()
 
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, desc, mensualidad, meses_totales, meses_pagados, monto_total, COALESCE(tasa_interes, 0) FROM deudas_msi")
+        cursor.execute("SELECT id, `desc`, mensualidad, meses_totales, meses_pagados, monto_total, COALESCE(tasa_interes, 0) FROM deudas_msi")
 
         for mid, d, men, mt, mp, monto_total, tasa in cursor.fetchall():
             row = ctk.CTkFrame(self.lista_msi, fg_color="#1e293b")
@@ -329,8 +329,8 @@ class PlaneacionTab(ctk.CTkFrame):
                 return
             self.e_pres_limite.delete(0, 'end')
 
-        conn = sqlite3.connect("data.db")
-        conn.cursor().execute("INSERT OR REPLACE INTO presupuestos (categoria, limite) VALUES (?, ?)", (categoria, limite))
+        conn = database.conectar()
+        conn.cursor().execute("REPLACE INTO presupuestos (categoria, limite) VALUES (?, ?)", (categoria, limite))
         conn.commit()
         conn.close()
         self.actualizar_presupuestos()
@@ -346,7 +346,7 @@ class PlaneacionTab(ctk.CTkFrame):
     def eliminar_presupuesto(self, categoria):
         if not messagebox.askyesno("Confirmar", f"¿Eliminar el presupuesto de '{categoria}'?"):
             return
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute("DELETE FROM presupuestos WHERE categoria=?", (categoria,))
         conn.commit()
         conn.close()
@@ -356,21 +356,21 @@ class PlaneacionTab(ctk.CTkFrame):
         for w in self.lista_presupuestos.winfo_children(): w.destroy()
 
         mes_actual = datetime.now().strftime("%Y-%m")
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         cursor.execute("""
             SELECT p.categoria, p.limite,
                    COALESCE((SELECT SUM(g.monto) FROM gastos g
-                             WHERE g.categoria = p.categoria AND strftime('%Y-%m', g.fecha) = ?), 0)
+                             WHERE g.categoria = p.categoria AND LEFT(g.fecha, 7) = ?), 0)
             FROM presupuestos p ORDER BY p.categoria
         """, (mes_actual,))
         filas = cursor.fetchall()
 
         # Cumplimiento histórico: usa los límites ACTUALES sobre meses cerrados
         # (no hay historial de límites; simplificación documentada)
-        cursor.execute("SELECT categoria, strftime('%Y-%m', fecha), COALESCE(SUM(monto), 0) FROM gastos GROUP BY 1, 2")
+        cursor.execute("SELECT categoria, LEFT(fecha, 7), COALESCE(SUM(monto), 0) FROM gastos GROUP BY 1, 2")
         gasto_mensual = {(cat, mes): tot for cat, mes, tot in cursor.fetchall()}
-        cursor.execute("SELECT MIN(strftime('%Y-%m', fecha)) FROM gastos")
+        cursor.execute("SELECT MIN(LEFT(fecha, 7)) FROM gastos")
         primer_mes = cursor.fetchone()[0]
         conn.close()
 
@@ -423,7 +423,6 @@ class PlaneacionTab(ctk.CTkFrame):
     # PLAN DE PAGO DE TARJETAS
     # =========================================================
     def obtener_tarjetas_con_deuda(self):
-        import database
         return [(cid, nombre, tasa, -saldo)
                 for cid, nombre, tipo, tasa, saldo in database.obtener_saldos_cuentas()
                 if tipo == "Crédito" and saldo < -0.01]  # deuda en positivo
@@ -463,7 +462,7 @@ class PlaneacionTab(ctk.CTkFrame):
             return
 
         # Persistir las tasas capturadas
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         deudas = []
         for cid, nombre, _tasa_vieja, deuda in tarjetas:
@@ -535,7 +534,6 @@ class PlaneacionTab(ctk.CTkFrame):
         return "🎯"
 
     def crear_meta(self):
-        import database
         nombre = self.e_meta_nombre.get().strip()
         try:
             objetivo = float(self.e_meta_objetivo.get().strip())
@@ -552,7 +550,7 @@ class PlaneacionTab(ctk.CTkFrame):
             messagebox.showerror("Error", "Vincula la meta a una cuenta (créala en Tesorería si falta).")
             return
 
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute("INSERT INTO metas (nombre, monto_objetivo, cuenta_id, activo) VALUES (?,?,?,1)",
                               (nombre, objetivo, cuenta_id))
         conn.commit()
@@ -562,7 +560,7 @@ class PlaneacionTab(ctk.CTkFrame):
         self.actualizar_metas()
 
     def editar_meta(self, meta_id):
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         fila = conn.cursor().execute("SELECT nombre, monto_objetivo FROM metas WHERE id=?", (meta_id,)).fetchone()
         conn.close()
         if not fila:
@@ -593,7 +591,7 @@ class PlaneacionTab(ctk.CTkFrame):
             if not nombre:
                 messagebox.showerror("Error", "Ponle nombre.", parent=dialog)
                 return
-            conn = sqlite3.connect("data.db")
+            conn = database.conectar()
             conn.cursor().execute("UPDATE metas SET nombre=?, monto_objetivo=? WHERE id=?", (nombre, objetivo, meta_id))
             conn.commit()
             conn.close()
@@ -606,14 +604,13 @@ class PlaneacionTab(ctk.CTkFrame):
     def eliminar_meta(self, meta_id):
         if not messagebox.askyesno("Confirmar", "¿Eliminar esta meta? (La cuenta y su dinero no se tocan)"):
             return
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         conn.cursor().execute("DELETE FROM metas WHERE id=?", (meta_id,))
         conn.commit()
         conn.close()
         self.actualizar_metas()
 
     def actualizar_metas(self):
-        import database
         for w in self.lista_metas.winfo_children(): w.destroy()
 
         nombres_cuentas = [n for _c, n, _t, _ta, _s in database.obtener_saldos_cuentas()]
@@ -681,14 +678,14 @@ class PlaneacionTab(ctk.CTkFrame):
         # Limpieza del canvas
         for widget in self.canvas_sim_frame.winfo_children(): widget.destroy()
         
-        conn = sqlite3.connect("data.db")
+        conn = database.conectar()
         cursor = conn.cursor()
         
         # Extraer gastos consolidados vs gastos de la categoría elegida
-        cursor.execute("SELECT strftime('%Y-%m', fecha) as periodo, SUM(monto) FROM gastos WHERE categoria != ? GROUP BY periodo ORDER BY periodo ASC", (CATEGORIA_AHORRO,))
+        cursor.execute("SELECT LEFT(fecha, 7) as periodo, SUM(monto) FROM gastos WHERE categoria != ? GROUP BY periodo ORDER BY periodo ASC", (CATEGORIA_AHORRO,))
         datos_totales = dict(cursor.fetchall())
         
-        cursor.execute("SELECT strftime('%Y-%m', fecha) as periodo, SUM(monto) FROM gastos WHERE categoria=? GROUP BY periodo ORDER BY periodo ASC", (categoria,))
+        cursor.execute("SELECT LEFT(fecha, 7) as periodo, SUM(monto) FROM gastos WHERE categoria=? GROUP BY periodo ORDER BY periodo ASC", (categoria,))
         datos_cat = dict(cursor.fetchall())
         conn.close()
         

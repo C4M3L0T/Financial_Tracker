@@ -6,8 +6,9 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-WorkingDirectory=/home/Angel/Escritorio/arch_tracker
-ExecStart=/usr/bin/python3 /home/Angel/Escritorio/arch_tracker/bot_listener.py
+# %h = home del usuario. Ajusta la ruta si el repo no está clonado en ~/arch_tracker
+WorkingDirectory=%h/arch_tracker
+ExecStart=/usr/bin/python3 %h/arch_tracker/bot_listener.py
 Restart=always
 RestartSec=5
 
